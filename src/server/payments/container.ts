@@ -53,9 +53,15 @@ export function getPayments(): Payments {
   return cached;
 }
 
-/** Client IP for provider allow-lists. Platform-neutral: first hop of X-Forwarded-For, else X-Real-IP. */
-export function clientIp(headers: Headers): string | null {
-  const xff = headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]!.trim() || null;
-  return headers.get("x-real-ip");
+export const DEFAULT_TRUSTED_IP_HEADER = "x-vercel-forwarded-for";
+
+/**
+ * Client IP for provider allow-lists (Payme source IPs). Read ONLY from the platform header named by env
+ * TRUSTED_IP_HEADER (default x-vercel-forwarded-for, src/lib/env.ts). Never from x-forwarded-for / x-real-ip, which a
+ * client can set. First comma-separated entry, trimmed. Missing/empty -> null, which an enabled allow-list rejects.
+ */
+export function clientIp(headers: Headers, headerName: string = process.env.TRUSTED_IP_HEADER?.trim() || DEFAULT_TRUSTED_IP_HEADER): string | null {
+  const v = headers.get(headerName);
+  if (!v) return null;
+  return v.split(",")[0]!.trim() || null;
 }

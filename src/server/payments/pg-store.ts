@@ -134,7 +134,9 @@ export class PgStore implements CommerceRepo, InventoryService {
 
   // ---------- checkouts
   async insertCheckout(c: NewCheckout, tx?: TxLike): Promise<void> {
-    // shippingName is not a column (joined from shipping_methods); reserved_until is set by reserve_checkout
+    // TODO(Backend 0009): write c.shippingName into checkouts.shipping_method_name (snapshot, copied to orders) and read it
+    // back in getCheckout instead of joining shipping_methods.name. Until then the name is joined live.
+    // reserved_until is set by reserve_checkout.
     await this.q(tx)`
       insert into checkouts (id, email, phone, locale, currency, items, shipping_address, billing_address, shipping_method_id, idempotency_key,
         idempotency_payload_hash, subtotal_cents, shipping_cents, tax_cents, discount_cents, total_cents, provider, access_token_hash, status, expires_at)
@@ -261,6 +263,7 @@ export class PgStore implements CommerceRepo, InventoryService {
       values (${p.orderId}, ${p.provider}, ${p.providerPaymentId}, ${p.amountMinor}, ${p.currency}, ${p.status}, ${p.raw === undefined ? null : this.sql.json(p.raw as never)})
       on conflict (provider, provider_payment_id) do update set status = excluded.status, raw = coalesce(excluded.raw, payments.raw)`;
   }
+  // TODO(Backend 0009): insert r.orderId into refunds.order_id and read it directly (today derived via payments.order_id).
   async recordRefund(r: Parameters<CommerceRepo["recordRefund"]>[0]): Promise<RefundRow> {
     const [pay] = await this.sql`select id from payments where provider = ${r.provider} and provider_payment_id = ${r.providerPaymentId}`;
     if (!pay) throw new Error(`payment ${r.provider}:${r.providerPaymentId} not found for refund`);
