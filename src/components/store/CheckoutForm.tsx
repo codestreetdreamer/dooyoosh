@@ -272,7 +272,7 @@ export function CheckoutForm() {
                     <span>
                       {l.productName} <span className="text-muted">× {l.quantity}</span>
                       <span className="block text-xs text-muted">{[l.colour, l.size].filter(Boolean).join(" · ")}</span>
-                      {l.issue ? <span className="block text-xs text-danger">{issueLabel(l.issue, l.maxQuantity ?? 0, tb)}</span> : null}
+                      {l.issue ? <span className="block text-xs text-danger">{issueLabel(l.issue, tb)}</span> : null}
                     </span>
                     <Price amountMinor={l.lineTotalMinor} currency={bag.data!.currency} locale={locale} />
                   </li>

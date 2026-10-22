@@ -112,7 +112,7 @@
     "validating": "Checking prices and availability…",
     "reservation": "Items are not reserved until you start payment. Once you continue to payment, we hold your pieces for 35 minutes.",
     "issue_out_of_stock": "Sold out — please remove this item.",
-    "issue_insufficient_stock": "Only {max} available — quantity reduced.",
+    "issue_insufficient_stock": "Limited availability — we adjusted the quantity.",
     "issue_inactive": "No longer available.",
     "issue_not_found": "No longer available.",
     "priceUpdated": "Price updated",

@@ -105,7 +105,7 @@ export function BagView() {
                   <Price amountMinor={unit} currency={currency} locale={locale} className="mt-1 block text-sm" />
                   {issue ? (
                     <p role="alert" className="mt-2 text-sm text-danger">
-                      {issueLabel(issue, v?.maxQuantity ?? 0, t)}
+                      {issueLabel(issue, t)}
                     </p>
                   ) : null}
                   <div className="mt-4 flex items-center gap-6">
@@ -153,7 +153,8 @@ export function BagView() {
 
 const KNOWN_ISSUES = new Set(["out_of_stock", "inactive", "unpublished", "not_found"]);
 /** Copy for a cart line issue; unknown future codes degrade to a generic "can't be ordered" message. */
-export function issueLabel(issue: string, max: number, t: (k: string, v?: Record<string, number>) => string): string {
-  if (issue === "insufficient_stock") return t("issue_insufficient_stock", { max });
+/** Never shows exact stock counts (privacy of inventory): quantity caps are clamped silently with generic copy. */
+export function issueLabel(issue: string, t: (k: string) => string): string {
+  if (issue === "insufficient_stock") return t("issue_insufficient_stock");
   return KNOWN_ISSUES.has(issue) ? t(`issue_${issue}`) : t("issue_unknown");
 }
