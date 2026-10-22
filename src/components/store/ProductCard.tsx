@@ -14,16 +14,16 @@ export function ProductCard({ product, locale, labels, priority = false, sizes =
     <article className="group relative">
       <Link href={`/product/${product.slug}`} className="block">
         <div className="relative aspect-[4/5] overflow-hidden bg-line">
-          {product.image ? (
+          {(
             <Img
-              src={product.image.url}
-              alt={product.image.alt || product.name}
+              src={product.image?.url}
+              alt={product.image?.alt || product.name}
               fill
               sizes={sizes}
               priority={priority}
               className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.03]"
             />
-          ) : null}
+          )}
           {!product.available ? (
             <span className="absolute left-3 top-3 bg-surface px-2.5 py-1 text-[0.68rem] uppercase tracking-[0.16em]">{labels.soldOut}</span>
           ) : null}

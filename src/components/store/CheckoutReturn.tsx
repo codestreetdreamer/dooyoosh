@@ -8,6 +8,7 @@ import { call } from "@/lib/store/data-source";
 import { clearReservation } from "@/lib/store/reservation";
 import { storeToken, useUrlToken } from "@/lib/store/url-token";
 import { ErrorState, Spinner } from "@/components/ui/States";
+import { DemoBanner } from "@/components/layout/DemoBanner";
 
 type S = CheckoutStatusResponse["data"];
 const POLL_MS = 2500;
@@ -74,6 +75,7 @@ export function CheckoutReturn({ checkoutId }: { checkoutId: string | null }) {
 
   return (
     <div aria-live="polite">
+      <div className="mb-8"><DemoBanner variant="inline" /></div>
       <h2 className="text-4xl md:text-5xl">{title}</h2>
       {body ? <p className="mt-4 max-w-prose text-muted">{body}</p> : null}
       {d.orderReference ? (

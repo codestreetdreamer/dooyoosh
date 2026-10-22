@@ -59,7 +59,7 @@ export default async function ArticlePage({ params }: { params: Params }) {
           </p>
         </div>
         <div className="relative mt-10 aspect-[16/9] overflow-hidden bg-line">
-          <Img src={a.coverImageUrl ?? "/placeholders/hero-1.svg"} alt="" fill priority sizes="100vw" className="object-cover" />
+          <Img src={a.coverImageUrl} alt="" fill priority sizes="100vw" className="object-cover" />
         </div>
       </header>
       <div className="mx-auto mt-16 max-w-2xl px-4">

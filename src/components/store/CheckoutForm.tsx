@@ -11,6 +11,7 @@ import { EmptyState, Spinner } from "@/components/ui/States";
 import { Price } from "./Price";
 import { ReservationNotice } from "./ReservationNotice";
 import { useValidatedBag } from "./BagView";
+import { DemoBanner } from "@/components/layout/DemoBanner";
 
 /** Countries offered in the form; the server decides shippability (422 COUNTRY_NOT_SHIPPABLE). Launch list is [OPEN]. */
 const COUNTRIES: [string, string][] = [
@@ -281,6 +282,7 @@ export function CheckoutForm() {
             </>
           )}
           <div className="mt-6"><ReservationNotice text={t("reservationNote")} countdownLabel="{time}" /></div>
+          <div className="mt-4"><DemoBanner variant="inline" /></div>
           <button type="submit" disabled={blocked} className="btn btn-primary mt-6 w-full" aria-busy={submitting}>
             {submitting ? t("submitting") : t("pay")}
           </button>

@@ -95,7 +95,7 @@ export function BagView() {
             return (
               <li key={l.variantId} className="grid grid-cols-[96px_1fr] gap-4 py-6 md:grid-cols-[120px_1fr_auto] md:gap-6">
                 <Link href={`/product/${l.snapshot.productSlug}`} className="relative block aspect-[4/5] bg-line">
-                  {l.snapshot.imageUrl ? <Img src={l.snapshot.imageUrl} alt={name} fill sizes="120px" className="object-cover" /> : null}
+                  <Img src={l.snapshot.imageUrl} alt={name} fill sizes="120px" className="object-cover" />
                 </Link>
                 <div>
                   <h3 className="font-sans text-base">

@@ -7,7 +7,13 @@ export function ProductGallery({ images, name, labels }: { images: ProductImage[
   const sorted = [...images].sort((a, b) => a.sortOrder - b.sortOrder);
   const [active, setActive] = useState(0);
   const current = sorted[active];
-  if (!current) return <div className="aspect-[4/5] bg-line" aria-hidden />;
+  if (!current) {
+    return (
+      <div className="relative aspect-[4/5] overflow-hidden bg-line">
+        <Img src={null} alt={name} fill priority sizes="(min-width: 1024px) 55vw, 100vw" className="object-cover" />
+      </div>
+    );
+  }
   return (
     <section aria-label={labels.gallery} className="grid gap-3 md:grid-cols-[80px_1fr] md:gap-4">
       <div className="relative order-1 aspect-[4/5] overflow-hidden bg-line md:order-2">

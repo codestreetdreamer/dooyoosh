@@ -9,6 +9,7 @@ import { BagProvider } from "@/lib/store/bag";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { DevFixturesBanner } from "@/components/layout/DevFixturesBanner";
+import { DemoBanner } from "@/components/layout/DemoBanner";
 import "@/lib/store/fixtures-guard"; // throws at build time if fixtures are requested in production
 import "@/styles/globals.css";
 
@@ -47,6 +48,7 @@ export default async function LocaleLayout({ children, params }: { children: Rea
             <a href="#main" className="sr-only z-50 bg-ink px-4 py-3 text-bg focus:not-sr-only focus:fixed focus:left-4 focus:top-4">
               {t("skip")}
             </a>
+            <DemoBanner />
             <DevFixturesBanner />
             <Header />
             <main id="main" tabIndex={-1} className="flex-1 focus:outline-none">

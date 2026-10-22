@@ -211,5 +211,9 @@
     "title": "Something went wrong",
     "body": "Please try again. If the problem continues, contact us.",
     "retry": "Try again"
+  },
+  "demo": {
+    "banner": "Demo store — no real orders are accepted or charged.",
+    "label": "Demo"
   }
 }

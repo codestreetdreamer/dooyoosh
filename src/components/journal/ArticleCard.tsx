@@ -12,7 +12,7 @@ export function ArticleCard({ article, locale, readMore, large = false }: { arti
       <Link href={`/journal/${article.slug}`} className="block">
         <div className={`relative overflow-hidden bg-line ${large ? "aspect-[16/10]" : "aspect-[4/3]"}`}>
           <Img
-            src={article.coverImageUrl ?? "/placeholders/hero-1.svg"}
+            src={article.coverImageUrl}
             alt=""
             fill
             sizes={large ? "(min-width: 768px) 60vw, 100vw" : "(min-width: 768px) 33vw, 100vw"}

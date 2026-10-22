@@ -2,7 +2,8 @@
 import Image, { type ImageProps } from "next/image";
 import { useState } from "react";
 
-const FALLBACK = "/placeholders/hero-1.svg";
+/** Branded placeholder used when an image URL is null/empty or fails to load (e.g. demo images not uploaded yet). */
+export const IMAGE_FALLBACK = "/brand/placeholder.svg";
 
 /**
  * next/image wrapper.
@@ -11,7 +12,7 @@ const FALLBACK = "/placeholders/hero-1.svg";
  */
 export function Img({ src, alt, ...rest }: Omit<ImageProps, "src"> & { src: ImageProps["src"] | null | undefined }) {
   const [failed, setFailed] = useState(false);
-  const resolved = !src || failed ? FALLBACK : src;
+  const resolved = !src || failed ? IMAGE_FALLBACK : src;
   const isSvg = typeof resolved === "string" && resolved.endsWith(".svg");
   return (
     <Image
