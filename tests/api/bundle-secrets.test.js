@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
-const STATIC = path.join(ROOT, ".next/static");
+const STATIC = process.env.QA_NEXT_DIR ? path.join(process.env.QA_NEXT_DIR, "static") : path.join(ROOT, ".next/static");
 const built = fs.existsSync(STATIC);
 const files = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(d, e.name)) : [path.join(d, e.name)]));
 const PATTERNS = [

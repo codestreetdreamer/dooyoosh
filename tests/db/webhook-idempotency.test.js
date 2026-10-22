@@ -42,7 +42,7 @@ describe("webhook / callback idempotency", () => {
     const { checkoutId, shippingMethodId } = await seedCheckout(p);
     const co = { rows: [{ id: checkoutId }] }; const sm = { rows: [{ id: shippingMethodId }] };
     const ord = `INSERT INTO orders(reference,checkout_id,email,locale,currency,subtotal_cents,shipping_cents,total_cents,shipping_address,shipping_method_id,access_token_hash)
-      VALUES ($1,$2,'a@b.c','uz','UZS',100,0,100,'{}',$3,'h')`;
+      VALUES ($1,$2,'a@b.c','uz','UZS',100,0,100,'{}',$3,repeat('ab',32))`;
     await p.query(ord, ["DY-20261022-ABCDE", co.rows[0].id, sm.rows[0].id]);
     await expect(p.query(ord, ["DY-20261022-ABCDF", co.rows[0].id, sm.rows[0].id])).rejects.toMatchObject({ code: "23505" });
     await expect(p.query(ord.replace("$2", "gen_random_uuid()").replace("$3", "$2"), ["DY-20261022-ABCDE", sm.rows[0].id]))

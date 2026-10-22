@@ -27,7 +27,7 @@ describe("RLS", () => {
     // seed our own order (do not depend on file order)
     const { checkoutId, shippingMethodId } = await seedCheckout(p);
     await p.query(`INSERT INTO orders(reference,checkout_id,email,locale,currency,subtotal_cents,shipping_cents,total_cents,shipping_address,shipping_method_id,access_token_hash)
-      VALUES ($3, $1,'pii@b.c','uz','UZS',100,0,100,'{"line1":"secret"}',$2,'h')`,
+      VALUES ($3, $1,'pii@b.c','uz','UZS',100,0,100,'{"line1":"secret"}',$2,repeat('ab',32))`,
       [checkoutId, shippingMethodId, "DY-20261022-" + Array.from({ length: 5 }, () => "ABCDEFGHJKMNPQRSTVWXYZ"[Math.floor(Math.random() * 22)]).join("")]);
     const n = await as("anon", null, async (c) => {
       try { return (await c.query("SELECT count(*)::int n FROM orders")).rows[0].n; } catch { return "denied"; }
