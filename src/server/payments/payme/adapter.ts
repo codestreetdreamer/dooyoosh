@@ -220,8 +220,15 @@ export class PaymeAdapter implements PaymentProvider {
 
     const eventId = `PerformTransaction:${t.providerTxnId}`;
     await this.deps.repo.recordPaymentEvent("payme", eventId, "PerformTransaction", p);
-    const r = await captureCheckout(this.deps, { provider: "payme", checkoutId: t.checkoutId, providerPaymentId: t.providerTxnId, amountMinor: t.amountMinor, currency: t.currency, eventId, raw: { method: "PerformTransaction", id: t.providerTxnId } });
+    const r = await captureCheckout(this.deps, { provider: "payme", checkoutId: t.checkoutId, providerPaymentId: t.providerTxnId, amountMinor: t.amountMinor, currency: t.currency, eventId, raw: { method: "PerformTransaction", id: t.providerTxnId } }, { conflictMode: "abort" });
     if (r.kind === "not_found") throw new PaymeRpcError(E.TXN_NOT_FOUND, MSG.notFound);
+    if (r.kind === "aborted") {
+      // reservation expired between our check and convert: no order written, refuse so Payme does not take the money
+      const u = await this.deps.repo.updateProviderTxn("payme", t.providerTxnId, 1, { state: -1, reason: PAYME_REASON.EXECUTION_ERROR, cancelTime: now.getTime() });
+      if (u) await this.releaseCheckout(t.checkoutId, "expired");
+      await this.deps.repo.markPaymentEventProcessed("payme", eventId, "aborted");
+      throw new PaymeRpcError(E.CANNOT_PERFORM, MSG.orderNotPayable);
+    }
     if (r.kind === "stock_conflict") {
       // lost a race with expiry between our check and convert: order is stock_conflict, refuse so Payme does not finalize.
       await this.deps.repo.updateProviderTxn("payme", t.providerTxnId, 1, { state: -1, reason: PAYME_REASON.EXECUTION_ERROR, cancelTime: now.getTime(), orderId: r.orderId });

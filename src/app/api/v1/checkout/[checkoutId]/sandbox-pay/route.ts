@@ -2,17 +2,17 @@
  * POST /api/v1/checkout/{checkoutId}/sandbox-pay  body: {"token": "...", "outcome": "success"|"fail"}
  * Sandbox only (sandbox-gate.ts): 404 before anything else when the gate is closed.
  * QA P1: the token travels in the JSON body only. A `token` in the query string is rejected (400) so it never ends up
- * in access logs. PROPOSAL to Architect: replace contracts sandboxPayQuery with a body schema.
+ * in access logs (contracts payments.sandboxPayRequest, main cfd5cee).
  */
 import { z } from "zod";
 import { ApiError, errorResponse, withErrors } from "@/lib/errors";
-import { sandboxPayResponse } from "@/contracts/payments";
+import { sandboxPayRequest, sandboxPayResponse } from "@/contracts/payments";
 import { getPayments } from "@/server/payments/container";
 import { sandboxSimulatorEnabled } from "@/server/payments/sandbox-gate";
 import { simulateSandboxPayment } from "@/server/payments/sandbox";
 
 export const dynamic = "force-dynamic";
-const body = z.object({ token: z.string().min(32).max(128), outcome: z.enum(["success", "fail"]).default("success") }).strict();
+const body = sandboxPayRequest.strict();
 
 const handler = withErrors(async (req: Request, ctx: { params: Promise<{ checkoutId: string }> }) => {
   if (new URL(req.url).searchParams.has("token")) throw ApiError.validation("token must be sent in the JSON body, not the URL");

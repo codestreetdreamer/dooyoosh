@@ -155,8 +155,14 @@ export class ClickAdapter implements PaymentProvider {
       if (u) await this.release(t);
       return done(fail(E.CANCELLED), "reservation_expired");
     }
-    const cap = await captureCheckout(this.deps, { provider: "click", checkoutId: t.checkoutId, providerPaymentId: t.providerTxnId, amountMinor: t.amountMinor, currency: t.currency, eventId, raw: { click_paydoc_id: r.click_paydoc_id } });
+    const cap = await captureCheckout(this.deps, { provider: "click", checkoutId: t.checkoutId, providerPaymentId: t.providerTxnId, amountMinor: t.amountMinor, currency: t.currency, eventId, raw: { click_paydoc_id: r.click_paydoc_id } }, { conflictMode: "abort" });
     if (cap.kind === "not_found") return done(fail(E.USER_NOT_FOUND), "not_found");
+    if (cap.kind === "aborted") {
+      // reservation expired between our check and convert: no order written, refuse the Complete
+      const u = await repo.updateProviderTxn("click", t.providerTxnId, 1, { state: -1, cancelTime: now.getTime(), reason: null });
+      if (u) await this.release(t);
+      return done(fail(E.CANCELLED), "aborted");
+    }
     if (cap.kind === "stock_conflict") {
       await repo.updateProviderTxn("click", t.providerTxnId, 1, { state: -1, cancelTime: now.getTime(), orderId: cap.orderId });
       await repo.upsertPayment({ orderId: cap.orderId, provider: "click", providerPaymentId: t.providerTxnId, amountMinor: t.amountMinor, currency: t.currency, status: "canceled", raw: { refusedAtComplete: true } });

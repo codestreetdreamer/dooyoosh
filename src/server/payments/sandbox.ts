@@ -1,5 +1,5 @@
 /**
- * Sandbox payment simulator (POST /api/v1/checkout/{id}/sandbox-pay?token=&outcome=success|fail).
+ * Sandbox payment simulator (POST /api/v1/checkout/{id}/sandbox-pay, JSON body {token, outcome: success|fail}).
  * 404 unless PAYMENT_MODE=sandbox + SANDBOX_SIMULATOR_ENABLED=true and provider mock|click (sandbox-gate.ts). It builds the SAME signed callback the provider
  * would send and pushes it through the normal webhook pipeline, so nothing bypasses signature/amount checks.
  * Payme is not simulated here: use the official sandbox at https://test.paycom.uz (developer.help.paycom.uz/pesochnitsa).

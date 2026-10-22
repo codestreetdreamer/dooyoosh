@@ -12,11 +12,14 @@ import type { PaymentDeps } from "./deps";
 export type CaptureResult =
   | { kind: "paid" | "already"; orderId: string; reference: string }
   | { kind: "stock_conflict"; orderId: string; reference: string; conflictVariantIds: string[] }
+  | { kind: "aborted"; conflictVariantIds: string[] }
   | { kind: "not_found" };
 
 export async function captureCheckout(
   deps: PaymentDeps,
   p: { provider: PaymentProviderName; checkoutId: string; providerPaymentId: string; amountMinor: number; currency: string; eventId: string; raw: unknown },
+  /** "abort" (Payme/Click Perform/Complete): reservation not active -> no order written, caller refuses the provider txn. */
+  opts: { conflictMode?: "record" | "abort" } = {},
 ): Promise<CaptureResult> {
   const cause: TransitionCause = { kind: "provider_callback", provider: p.provider, eventId: p.eventId, verified: true };
   assertPaymentCapture(cause);
@@ -30,7 +33,9 @@ export async function captureCheckout(
     amountMinor: p.amountMinor,
     currency: p.currency,
     paidAt: now,
-  });
+  }, { conflictMode: opts.conflictMode ?? "record" });
+  // abort: no order, and the provider will be told to refuse, so no money was taken -> no payment row
+  if (r.status === "aborted") return { kind: "aborted", conflictVariantIds: r.conflictVariantIds };
   // money was taken in every branch -> record the payment (UNIQUE(provider, provider_payment_id) makes it idempotent)
   await deps.repo.upsertPayment({ orderId: r.orderId, provider: p.provider, providerPaymentId: p.providerPaymentId, amountMinor: p.amountMinor, currency: p.currency, status: "succeeded", raw: p.raw });
   if (r.status === "paid") {

@@ -1,13 +1,15 @@
 /**
- * Guest access token for the success page / order page (contracts: checkoutStatusQuery.token, getOrderQuery.token).
- * token = base64url(HMAC-SHA256(ORDER_TOKEN_SECRET, "checkout:" + checkoutId)). Deterministic, so an idempotent
- * checkout retry can return the same success URL without storing the raw token. DB stores only hex(HMAC_SHA256(ORDER_TOKEN_SECRET, token))
- * (checkouts.access_token_hash, copied to orders.access_token_hash by convert_checkout_to_order — SCHEMA_DELTA B1).
+ * Guest access token for status / order / sandbox endpoints (contracts createCheckoutResponse.data.accessToken).
+ * Architect ruling (main 12599c0): token is DERIVED, never stored:
+ *   accessToken = base64url(HMAC_SHA256(ORDER_TOKEN_SECRET, "checkout:" + checkoutId + ":" + idempotencyKey))
+ * (idempotencyKey = "" when the client sent none). The store keeps only hex(HMAC_SHA256(ORDER_TOKEN_SECRET, token))
+ * (checkouts.access_token_hash -> orders.access_token_hash). A replay with the same key + payload recomputes it.
+ * Clients send it as `Authorization: Bearer <token>` (status, orders) or in the sandbox-pay JSON body; never in a URL.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export function deriveAccessToken(secret: string, checkoutId: string): string {
-  return createHmac("sha256", secret).update(`checkout:${checkoutId}`).digest("base64url");
+export function deriveAccessToken(secret: string, checkoutId: string, idempotencyKey: string | null): string {
+  return createHmac("sha256", secret).update(`checkout:${checkoutId}:${idempotencyKey ?? ""}`).digest("base64url");
 }
 
 /** access_token_hash = hex(HMAC_SHA256(ORDER_TOKEN_SECRET, token)) (Architect, main cf91ef3). A DB leak alone cannot be

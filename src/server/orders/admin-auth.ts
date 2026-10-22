@@ -5,7 +5,7 @@
  * Real implementation = Backend & Database (src/server/auth: Supabase session + admin_users role + TOTP). Until it
  * lands, the resolver FAILS CLOSED (401) except for one dev-only path:
  *   ADMIN_DEV_TOKEN (>= 32 chars) as `Authorization: Bearer <token>`, accepted ONLY when PAYMENTS_STORE=memory and
- *   NODE_ENV != production. Role = owner, actorId = ADMIN_DEV_ACTOR_ID.
+ *   NODE_ENV != production and PAYMENT_MODE != live (ignored there even if set; src/lib/env.ts also refuses to boot). Role = owner, actorId = ADMIN_DEV_ACTOR_ID.
  * Backend plugs in with setAdminResolver(resolver) from its auth module.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -23,7 +23,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest();
 export function devTokenResolver(env: Env): AdminResolver {
   return async (req) => {
     const tok = env.ADMIN_DEV_TOKEN;
-    if (env.PAYMENTS_STORE !== "memory" || env.NODE_ENV === "production" || !tok || tok.length < 32) return null;
+    if (env.PAYMENTS_STORE !== "memory" || env.NODE_ENV === "production" || env.PAYMENT_MODE === "live" || !tok || tok.length < 32) return null;
     const h = req.headers.get("authorization") ?? "";
     if (!h.startsWith("Bearer ")) return null;
     return timingSafeEqual(sha(h.slice(7)), sha(tok)) ? { actorId: ADMIN_DEV_ACTOR_ID, role: "owner" } : null;

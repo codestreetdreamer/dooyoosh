@@ -1,7 +1,7 @@
 /**
  * Composition root for route handlers. Owner: Payments & Orders.
  * Store selection:
- *  - PAYMENTS_STORE=memory -> in-memory demo store seeded with demo-seed.ts (PAYMENTS_DEMO_SEED=false to skip);
+ *  - PAYMENTS_STORE=memory -> in-memory demo store seeded with demo-seed.ts only when PAYMENTS_DEMO_SEED=true (env.ts default false);
  *    refused when NODE_ENV=production. Data is lost on restart.
  *  - otherwise the Postgres implementation, which is NOT written yet: it waits for Backend's docs/DATABASE.md and
  *    src/server/inventory/reservations.ts. Until then this throws a clear error instead of half-working.
@@ -33,7 +33,7 @@ export function getPayments(): Payments {
   let store = g.__dyMemoryStore;
   if (!store) {
     store = new MemoryStore(now);
-    if (process.env.PAYMENTS_DEMO_SEED !== "false") seedDemo(store);
+    if (process.env.PAYMENTS_DEMO_SEED === "true") seedDemo(store);
     g.__dyMemoryStore = store;
   }
   const deps: PaymentDeps = { repo: store, inventory: store, notifier: logNotifier, config, now };

@@ -225,7 +225,7 @@ export class MemoryStore implements CommerceRepo, InventoryService {
   async releaseExpired(now: Date = this.clock()) {
     return this.releaseRows(this.s.reservations.filter((r) => r.status === "active" && r.expiresAt <= now));
   }
-  async convert(checkoutId: string, input: ConvertOrderInput): Promise<ConvertResult> {
+  async convert(checkoutId: string, input: ConvertOrderInput, opts: { conflictMode?: "record" | "abort" } = {}): Promise<ConvertResult> {
     // fully synchronous body = atomic, like the row-locked SQL function (no interleaving between check and write)
     const existing = [...this.s.orders.values()].find((o) => o.checkoutId === checkoutId);
     if (existing) return { status: "already_converted", orderId: existing.id, reference: existing.reference };
@@ -233,6 +233,8 @@ export class MemoryStore implements CommerceRepo, InventoryService {
     if (!c) throw new Error("checkout not found");
     const rs = this.s.reservations.filter((r) => r.checkoutId === checkoutId);
     const conflict = rs.filter((r) => r.status !== "active" || r.expiresAt <= input.paidAt);
+    // abort mode (contracts/inventory.ts): nothing is written, reservations untouched; caller refuses the provider txn
+    if ((conflict.length || rs.length === 0) && opts.conflictMode === "abort") return { status: "aborted", conflictVariantIds: conflict.map((r) => r.variantId) };
     const orderId = randomUUID();
     const base: OrderRow = { id: orderId, reference: input.reference, checkoutId, status: "pending_payment", totalMinor: c.totalMinor, currency: c.currency, items: c.items, paidAt: null };
     let to: OrderStatus;

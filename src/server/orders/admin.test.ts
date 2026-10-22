@@ -2,9 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/errors";
 import { createCheckout } from "../checkout/service";
-import { deriveAccessToken } from "../checkout/token";
 import { simulateSandboxPayment } from "../payments/sandbox";
-import { TOKEN_SECRET, setup } from "../payments/__tests__/fixtures";
+import { setup } from "../payments/__tests__/fixtures";
 import { adminAdjustStock, adminCreateShipment, adminGetOrder, adminListOrders, adminRefundOrder, adminTransitionOrder } from "./admin";
 import { ADMIN_DEV_ACTOR_ID, devTokenResolver, requireAdmin } from "./admin-auth";
 import { getPublicOrder } from "./view";
@@ -19,7 +18,7 @@ async function apiError(p: Promise<unknown>) {
 async function paidOrder() {
   const f = setup();
   const d = await createCheckout(f.deps, f.provider, f.request());
-  const token = deriveAccessToken(TOKEN_SECRET, d.checkoutId);
+  const token = d.accessToken!;
   await simulateSandboxPayment(f.deps, f.provider, d.checkoutId, token, "success");
   const order = (await f.deps.repo.getOrderByCheckout(d.checkoutId))!;
   return { f, d, token, order, providers: new Map([[f.provider.name, f.provider]]) };
@@ -48,6 +47,13 @@ describe("admin auth (server-side)", () => {
     expect((await apiError(requireAdmin(req(`Bearer ${"e".repeat(40)}`), "orders", devTokenResolver(env)))).status).toBe(401);
     expect((await apiError(requireAdmin(req(`Bearer ${"d".repeat(40)}`), "orders", devTokenResolver({ ...env, NODE_ENV: "production" })))).status).toBe(401);
     expect((await apiError(requireAdmin(req(`Bearer ${"d".repeat(40)}`), "orders", devTokenResolver({ ...env, PAYMENTS_STORE: undefined })))).status).toBe(401);
+  });
+  it("QA P0: ADMIN_DEV_TOKEN is ignored in production / live even when set and correct", async () => {
+    const good = req(`Bearer ${"d".repeat(40)}`);
+    for (const over of [{ NODE_ENV: "production" }, { PAYMENT_MODE: "live" }, { NODE_ENV: "production", PAYMENT_MODE: "sandbox", ALLOW_MOCK_IN_PRODUCTION: "true" }]) {
+      expect(await devTokenResolver({ ...env, ...over })(good)).toBeNull();
+    }
+    expect(await devTokenResolver({ ...env, PAYMENT_MODE: "sandbox" })(good)).toEqual(actor);
   });
   it("dev token works locally; role matrix enforced", async () => {
     expect(await requireAdmin(req(`Bearer ${"d".repeat(40)}`), "orders", devTokenResolver(env))).toEqual(actor);

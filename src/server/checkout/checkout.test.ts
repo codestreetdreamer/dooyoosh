@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/errors";
 import { createCheckout, getCheckoutStatus, releaseExpiredCheckouts } from "./service";
-import { deriveAccessToken } from "./token";
+import { deriveAccessToken, hashAccessToken } from "./token";
+import { IdempotencyConflictError } from "./idempotency";
 import { handleWebhook } from "../payments/webhooks";
 import { MOCK_SIGNATURE_HEADER, signMockPayload } from "../payments/mock";
 import { SECRET, TOKEN_SECRET, setup } from "../payments/__tests__/fixtures";
@@ -28,8 +29,13 @@ describe("createCheckout", () => {
     expect(f.store.stock(f.v1)).toEqual({ onHand: 5, reserved: 2 });
     expect(f.store.s.checkouts.get(d.checkoutId)!.status).toBe("awaiting_payment");
     expect(d.redirectUrl).toContain("/en/checkout/sandbox-pay?checkoutId=");
-    expect(d.accessToken).toBe(deriveAccessToken(TOKEN_SECRET, d.checkoutId));
-    expect(d.redirectUrl).not.toContain(d.accessToken);
+    expect(d.accessToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(d.accessToken).toBe(deriveAccessToken(TOKEN_SECRET, d.checkoutId, null));
+    expect(d.replayed).toBe(false);
+    expect(d.redirectUrl).not.toContain(d.accessToken!);
+    // only the HMAC hash is stored; the raw token appears nowhere in the store
+    expect(f.store.s.checkouts.get(d.checkoutId)!.accessTokenHash).toBe(hashAccessToken(TOKEN_SECRET, d.accessToken!));
+    expect(JSON.stringify([...f.store.s.checkouts.values()])).not.toContain(d.accessToken!);
   });
 
   it("all-or-nothing: one line short -> 409 OUT_OF_STOCK, nothing reserved, no checkout row", async () => {
@@ -59,12 +65,53 @@ describe("createCheckout", () => {
     expect(f.store.stock(f.v1).reserved).toBe(0);
   });
 
-  it("idempotencyKey: retry returns the same checkout, no second reservation", async () => {
+  it("derived token is deterministic per (checkoutId, idempotencyKey) and differs when either changes", () => {
+    const id = randomUUID(); const k = randomUUID();
+    expect(deriveAccessToken(TOKEN_SECRET, id, k)).toBe(deriveAccessToken(TOKEN_SECRET, id, k));
+    expect(deriveAccessToken(TOKEN_SECRET, id, k)).not.toBe(deriveAccessToken(TOKEN_SECRET, id, randomUUID()));
+    expect(deriveAccessToken(TOKEN_SECRET, id, k)).not.toBe(deriveAccessToken(TOKEN_SECRET, randomUUID(), k));
+    expect(deriveAccessToken(TOKEN_SECRET, id, k)).not.toBe(deriveAccessToken(TOKEN_SECRET.replace("t", "T"), id, k));
+    expect(deriveAccessToken(TOKEN_SECRET, id, null)).toBe(deriveAccessToken(TOKEN_SECRET, id, ""));
+  });
+
+  it("idempotencyKey + same payload: same checkout and same derived accessToken on replay, no second reservation", async () => {
     const f = setup();
     const key = randomUUID();
     const a = await createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key }));
-    const b = await createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key }));
+    // same payload, different bag order + key order -> still the same canonical request
+    const req = f.request({ idempotencyKey: key });
+    const b = await createCheckout(f.deps, f.provider, { ...req, items: [...req.items].reverse() });
     expect(b.checkoutId).toBe(a.checkoutId);
+    expect(b.replayed).toBe(true);
+    expect(a.replayed).toBe(false);
+    expect(b.accessToken).toBe(a.accessToken);
+    expect(a.accessToken).toBe(deriveAccessToken(TOKEN_SECRET, a.checkoutId, key));
+    expect(b.totals).toEqual(a.totals);
+    expect(f.store.stock(f.v1).reserved).toBe(2);
+    // the original token still works; nothing about it is stored except its hash
+    expect((await getCheckoutStatus(f.deps, a.checkoutId, a.accessToken!)).checkoutStatus).toBe("awaiting_payment");
+    expect(JSON.stringify([...f.store.s.checkouts.values()])).not.toContain(a.accessToken!);
+  });
+
+  it("idempotencyKey + different payload -> IdempotencyConflictError (409), nothing reserved twice", async () => {
+    const f = setup();
+    const key = randomUUID();
+    await createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key }));
+    for (const over of [{ email: "other@example.com" }, { items: [{ variantId: f.v1, quantity: 1 }] }]) {
+      await expect(createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key, ...over }))).rejects.toBeInstanceOf(IdempotencyConflictError);
+    }
+    expect(f.store.s.checkouts.size).toBe(1);
+    expect(f.store.stock(f.v1).reserved).toBe(2);
+  });
+
+  it("concurrent submits with the same key: one checkout, one reservation, loser is a replay", async () => {
+    const f = setup();
+    const key = randomUUID();
+    const rs = await Promise.all([createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key })), createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key }))]);
+    expect(new Set(rs.map((r) => r.checkoutId)).size).toBe(1);
+    expect(rs[0]!.accessToken).toBe(rs[1]!.accessToken);
+    expect(rs.filter((r) => r.replayed)).toHaveLength(1);
+    expect(f.store.s.checkouts.size).toBe(1);
     expect(f.store.stock(f.v1).reserved).toBe(2);
   });
 
@@ -86,7 +133,7 @@ describe("createCheckout", () => {
     const d = await createCheckout(sb.deps, sb.provider, sb.request());
     const url = Buffer.from(d.redirectUrl.split("/").pop()!, "base64").toString();
     expect(url).toContain(`c=https://shop.example/en/checkout/return?checkoutId=${d.checkoutId}`);
-    expect(url).not.toContain(d.accessToken);
+    expect(url).not.toContain(d.accessToken!);
     expect(d.redirectUrl.startsWith("https://test.paycom.uz/")).toBe(true);
   });
 
@@ -112,7 +159,7 @@ describe("mock provider end to end", () => {
     expect(order.status).toBe("paid");
     expect(f.store.stock(f.v1)).toEqual({ onHand: 3, reserved: 0 });
     expect(f.store.s.movements.filter((m) => m.reason === "sale")).toHaveLength(2);
-    const token = deriveAccessToken(TOKEN_SECRET, d.checkoutId);
+    const token = d.accessToken!;
     expect(await getCheckoutStatus(f.deps, d.checkoutId, token)).toEqual({ checkoutStatus: "completed", orderReference: order.reference, orderStatus: "paid" });
   });
 

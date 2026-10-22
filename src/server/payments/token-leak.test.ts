@@ -18,12 +18,13 @@ describe("no adapter URL contains the guest token", () => {
     if (mode === "live") f.deps.config.siteUrl = "https://shop.example";
     const spy = vi.spyOn(f.provider, "createSession");
     const d = await createCheckout(f.deps, f.provider, f.request());
+    const tok = d.accessToken!;
     const input = spy.mock.calls[0]![0];
     for (const url of [d.redirectUrl, input.successUrl, input.cancelUrl]) {
-      expect(decodeAll(url)).not.toContain(d.accessToken);
+      expect(decodeAll(url)).not.toContain(tok);
       expect(new URL(url).searchParams.has("token")).toBe(false);
     }
-    expect(d.accessToken.length).toBeGreaterThanOrEqual(32);
+    expect(tok.length).toBeGreaterThanOrEqual(32);
   });
 });
 

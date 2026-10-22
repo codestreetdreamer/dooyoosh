@@ -62,6 +62,8 @@ export interface ShippingMethodForCheckout {
 export interface NewCheckout {
   id: string;
   idempotencyKey: string | null;
+  /** hex HMAC of the canonical request payload (checkout/idempotency.ts); SCHEMA_DELTA request: checkouts.idempotency_request_hash text */
+  idempotencyRequestHash: string | null;
   accessTokenHash: string;
   email: string;
   phone: string | null;

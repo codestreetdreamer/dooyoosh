@@ -5,7 +5,7 @@
  * ignored) -> ONE transaction { insert checkouts row; inventory.reserve (reserve_checkout) } -> provider.createSession
  * -> store provider_session_id. Provider session = 30 min, reservation = 35 min (contracts/checkout.ts).
  */
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { PROVIDER_SESSION_TTL_MINUTES, RESERVATION_TTL_MINUTES, type CreateCheckoutRequest, type CreateCheckoutResponse } from "@/contracts/checkout";
 import type { CheckoutStatusResponse } from "@/contracts/orders";
 import { ApiError } from "@/lib/errors";
@@ -14,15 +14,14 @@ import type { PaymentDeps } from "../payments/deps";
 import type { CheckoutRow, NewCheckout } from "../payments/store";
 import { computeQuote, linesMissingFiscalData, validateLines } from "./pricing";
 import { deriveAccessToken, hashAccessToken, tokenMatches } from "./token";
+import { IdempotencyConflictError, requestHash } from "./idempotency";
 
 /**
- * + accessToken: the raw guest token (QA P1). It is returned ONLY in this 201 body and is never put in any URL
- * (redirect, success/return, cancel) because those reach third-party hosts (Payme/Click return_url) and logs.
- * Frontend keeps it (sessionStorage by checkoutId) and sends it in the body of /sandbox-pay and as ?token= on
- * GET /checkout/{id}/status and /orders/{ref} (our own API, no-store, no-referrer).
- * PROPOSAL to Architect: add `accessToken` to contracts createCheckoutResponse.data.
+ * accessToken: the guest token, derived (token.ts), never stored (only its HMAC hash), never in any URL (redirect,
+ * success/return, cancel reach Payme/Click and logs). An idempotent replay (same key + same payload) recomputes and
+ * returns the same accessToken with replayed = true (route answers 200 instead of 201).
  */
-type CheckoutData = CreateCheckoutResponse["data"] & { accessToken: string };
+export type CheckoutData = CreateCheckoutResponse["data"] & { replayed: boolean };
 const MIN = 60_000;
 
 function urls(deps: PaymentDeps, c: { id: string; locale: string }) {
@@ -49,9 +48,10 @@ async function openSession(deps: PaymentDeps, provider: PaymentProvider, c: NewC
   });
 }
 
-function toData(c: NewCheckout | CheckoutRow, provider: PaymentProvider, redirectUrl: string, tokenSecret: string): CheckoutData {
+function toData(c: NewCheckout | CheckoutRow, provider: PaymentProvider, redirectUrl: string, tokenSecret: string, replayed: boolean): CheckoutData {
   return {
-    accessToken: deriveAccessToken(tokenSecret, c.id),
+    accessToken: deriveAccessToken(tokenSecret, c.id, c.idempotencyKey),
+    replayed,
     checkoutId: c.id,
     provider: provider.name,
     redirectUrl,
@@ -66,16 +66,11 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
   const now = deps.now();
   validateLines(req.items);
 
-  // Idempotent retry of the same submit (contracts: idempotencyKey). Same key -> same checkout, no second reservation.
+  // Idempotent retry (contracts: idempotencyKey). Key bound to the payload hash; same key -> same checkout, no second reservation.
+  const reqHash = req.idempotencyKey ? requestHash(deps.config.tokenSecret, req) : null;
   if (req.idempotencyKey) {
     const existing = await repo.getCheckoutByIdempotencyKey(req.idempotencyKey);
-    if (existing) {
-      if ((existing.status === "open" || existing.status === "awaiting_payment") && existing.expiresAt > now && existing.provider === provider.name) {
-        const s = await openSession(deps, provider, existing);
-        return toData(existing, provider, s.redirectUrl, deps.config.tokenSecret);
-      }
-      throw ApiError.validation("idempotencyKey was already used for a closed checkout; start a new checkout");
-    }
+    if (existing) return replay(deps, provider, existing, reqHash!);
   }
 
   const variants = await repo.getVariantsForCheckout(req.items.map((i) => i.variantId), req.locale);
@@ -95,7 +90,8 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
   const c: NewCheckout = {
     id,
     idempotencyKey: req.idempotencyKey ?? null,
-    accessTokenHash: hashAccessToken(deps.config.tokenSecret, deriveAccessToken(deps.config.tokenSecret, id)),
+    idempotencyRequestHash: reqHash,
+    accessTokenHash: hashAccessToken(deps.config.tokenSecret, deriveAccessToken(deps.config.tokenSecret, id, req.idempotencyKey ?? null)),
     email: req.email,
     phone: req.phone ?? req.shippingAddress.phone ?? null,
     locale: req.locale,
@@ -116,11 +112,20 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
   };
 
   // ONE transaction: checkout row + reservations. reserve_checkout is the authoritative stock check.
-  await repo.runInTransaction(async (tx) => {
-    await repo.insertCheckout(c, tx);
-    const r = await inventory.reserve(id, quote.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })), c.reservedUntil, tx);
-    if (!r.ok) throw r.code === "PRICE_CHANGED" ? ApiError.priceChanged(r.variantIds) : ApiError.outOfStock(r.variantIds);
-  });
+  try {
+    await repo.runInTransaction(async (tx) => {
+      await repo.insertCheckout(c, tx);
+      const r = await inventory.reserve(id, quote.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })), c.reservedUntil, tx);
+      if (!r.ok) throw r.code === "PRICE_CHANGED" ? ApiError.priceChanged(r.variantIds) : ApiError.outOfStock(r.variantIds);
+    });
+  } catch (e) {
+    // concurrent submit with the same key won the UNIQUE(idempotency_key) race: answer as a replay of the winner
+    if (req.idempotencyKey && isUniqueViolation(e)) {
+      const winner = await repo.getCheckoutByIdempotencyKey(req.idempotencyKey);
+      if (winner) return replay(deps, provider, winner, reqHash!);
+    }
+    throw e;
+  }
 
   let session;
   try {
@@ -131,10 +136,25 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
     throw ApiError.payment("Could not start payment", { provider: provider.name, cause: e instanceof Error ? e.message : "unknown" });
   }
   await repo.setProviderSession(id, session.providerSessionId);
-  return toData(c, provider, session.redirectUrl, deps.config.tokenSecret);
+  return toData(c, provider, session.redirectUrl, deps.config.tokenSecret, false);
 }
 
-/** GET /checkout/{id}/status?token= — unknown id OR wrong token -> 404 (do not reveal which). */
+function isUniqueViolation(e: unknown): boolean {
+  const o = e as { code?: unknown; message?: unknown } | null;
+  return !!o && (o.code === "23505" || (typeof o.message === "string" && o.message.includes("unique violation: idempotency_key")));
+}
+
+async function replay(deps: PaymentDeps, provider: PaymentProvider, existing: CheckoutRow, reqHash: string): Promise<CheckoutData> {
+  const h = existing.idempotencyRequestHash;
+  if (!h || h.length !== reqHash.length || !timingSafeEqual(Buffer.from(h), Buffer.from(reqHash))) throw new IdempotencyConflictError();
+  if ((existing.status === "open" || existing.status === "awaiting_payment") && existing.expiresAt > deps.now() && existing.provider === provider.name) {
+    const s = await openSession(deps, provider, existing);
+    return toData(existing, provider, s.redirectUrl, deps.config.tokenSecret, true);
+  }
+  throw ApiError.validation("idempotencyKey was already used for a closed checkout; start a new checkout");
+}
+
+/** GET /checkout/{id}/status (Authorization: Bearer) — unknown id OR wrong token -> 404 (do not reveal which). */
 export async function getCheckoutStatus(deps: PaymentDeps, checkoutId: string, token: string): Promise<CheckoutStatusResponse["data"]> {
   const c = await deps.repo.getCheckout(checkoutId);
   if (!c || !tokenMatches(deps.config.tokenSecret, token, c.accessTokenHash)) throw ApiError.notFound();
