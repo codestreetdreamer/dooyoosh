@@ -16,23 +16,30 @@ import { seedDemo } from "./demo-seed";
 import { logNotifier } from "../email/notifier";
 
 type Payments = { deps: PaymentDeps; provider: PaymentProvider; providers: Map<string, PaymentProvider>; memory?: MemoryStore };
-// globalThis: Next dev may load this module once per route bundle; the memory store must be one instance per process.
-const g = globalThis as unknown as { __dyPayments?: Payments };
+// Next may load this module once per route bundle. Only the memory store (data) is shared process-wide via globalThis;
+// providers/services stay per bundle so `instanceof ApiError` in errors.ts keeps working (a shared provider instance
+// from another bundle throws a different ApiError class -> 500 instead of 401).
+const g = globalThis as unknown as { __dyMemoryStore?: MemoryStore };
+let cached: Payments | undefined;
 
 export function getPayments(): Payments {
-  if (g.__dyPayments) return g.__dyPayments;
+  if (cached) return cached;
   const config = loadPaymentConfig(process.env);
   const now = () => new Date();
   if (process.env.PAYMENTS_STORE !== "memory") {
     throw new Error("Postgres payments store not wired yet (waiting for docs/DATABASE.md + src/server/inventory/reservations.ts). Set PAYMENTS_STORE=memory for a local demo.");
   }
   if (config.nodeEnv === "production") throw new Error("PAYMENTS_STORE=memory is not allowed in production");
-  const store = new MemoryStore(now);
-  if (process.env.PAYMENTS_DEMO_SEED !== "false") seedDemo(store);
+  let store = g.__dyMemoryStore;
+  if (!store) {
+    store = new MemoryStore(now);
+    if (process.env.PAYMENTS_DEMO_SEED !== "false") seedDemo(store);
+    g.__dyMemoryStore = store;
+  }
   const deps: PaymentDeps = { repo: store, inventory: store, notifier: logNotifier, config, now };
   const provider = createProvider(config, deps);
-  g.__dyPayments = { deps, provider, providers: new Map([[provider.name, provider]]), memory: store };
-  return g.__dyPayments;
+  cached = { deps, provider, providers: new Map([[provider.name, provider]]), memory: store };
+  return cached;
 }
 
 /** Client IP for provider allow-lists. Platform-neutral: first hop of X-Forwarded-For, else X-Real-IP. */

@@ -28,6 +28,7 @@ describe("createCheckout", () => {
     expect(f.store.stock(f.v1)).toEqual({ onHand: 5, reserved: 2 });
     expect(f.store.s.checkouts.get(d.checkoutId)!.status).toBe("awaiting_payment");
     expect(d.redirectUrl).toContain("/en/checkout/sandbox-pay?checkoutId=");
+    expect(new URL(d.redirectUrl).searchParams.get("token")).toBe(deriveAccessToken(TOKEN_SECRET, d.checkoutId));
   });
 
   it("all-or-nothing: one line short -> 409 OUT_OF_STOCK, nothing reserved, no checkout row", async () => {

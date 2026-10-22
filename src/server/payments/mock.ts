@@ -44,6 +44,9 @@ export class MockProvider implements PaymentProvider {
   async createSession(c: CheckoutForPayment): Promise<CreateSessionResult> {
     const u = new URL(`/${c.locale}/checkout/sandbox-pay`, this.siteUrl);
     u.searchParams.set("checkoutId", c.checkoutId);
+    // the guest token rides in our own successUrl; the sandbox pay page needs it to call /sandbox-pay and /status
+    const token = new URL(c.successUrl).searchParams.get("token");
+    if (token) u.searchParams.set("token", token);
     u.searchParams.set("provider", "mock");
     return { redirectUrl: u.toString(), providerSessionId: `mock_cs_${c.checkoutId}`, expiresAt: c.expiresAt };
   }
