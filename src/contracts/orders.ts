@@ -62,7 +62,8 @@ export const orderItem = z.object({
 export type OrderItem = z.infer<typeof orderItem>;
 
 export const orderParams = z.object({ reference: orderReference });
-export const getOrderQuery = z.object({ token: z.string().min(32).max(128) });
+/** token moved to header `Authorization: Bearer <accessToken>` (v0.5). Email links use `#token=` (fragment, never sent to servers). */
+export const getOrderQuery = z.object({});
 
 /** Guest-safe view (no internal ids, no raw payment data). */
 export const publicOrder = z.object({
@@ -93,7 +94,8 @@ export const checkoutStatusParams = z.object({ checkoutId: uuid });
  * copied to orders.access_token_hash by convert_checkout_to_order) and placed in the provider's
  * success return URL. Wrong token -> 404.
  */
-export const checkoutStatusQuery = z.object({ token: z.string().min(32).max(128) });
+/** token in header `Authorization: Bearer <accessToken>`; `?token=` -> 400 */
+export const checkoutStatusQuery = z.object({});
 export const checkoutStatusResponse = z.object({
   data: z.object({
     checkoutStatus: z.enum(["open", "awaiting_payment", "completed", "expired", "failed"]),

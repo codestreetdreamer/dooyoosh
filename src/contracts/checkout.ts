@@ -54,8 +54,9 @@ export const createCheckoutResponse = z.object({
   data: z.object({
     checkoutId: uuid,
     provider: paymentProvider,
-    /** guest access token, returned ONCE here; client keeps it in sessionStorage. Never put in any URL. */
-    guestToken: z.string().min(32).max(128),
+    /** guest access token (same idempotencyKey -> same token). Client keeps it in sessionStorage keyed by checkoutId.
+     *  Never put in any URL; send as `Authorization: Bearer <accessToken>` to status/order/sandbox endpoints. */
+    accessToken: z.string().min(32).max(128),
     redirectUrl: z.url(),
     /** provider session expiry (30 min) */
     expiresAt: isoDateTime,

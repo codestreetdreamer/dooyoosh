@@ -55,8 +55,12 @@ export class ApiError extends Error {
   }
 }
 
+/** Duck-typed: `instanceof` fails across Next.js bundles (route vs instrumentation vs edge). */
 export function isApiError(e: unknown): e is ApiError {
-  return e instanceof ApiError;
+  if (e instanceof ApiError) return true;
+  if (typeof e !== "object" || e === null) return false;
+  const o = e as { name?: unknown; code?: unknown; status?: unknown; toJSON?: unknown };
+  return o.name === "ApiError" && typeof o.code === "string" && (ERROR_CODES as readonly string[]).includes(o.code) && typeof o.status === "number" && typeof o.toJSON === "function";
 }
 
 /** Build the JSON error Response. Unknown errors become INTERNAL with no leaked detail. */

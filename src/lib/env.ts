@@ -52,6 +52,9 @@ const serverSchema = clientSchema
     ORDER_TOKEN_SECRET: z.string().min(32),
     /** memory = tests/local demo only; refused in production */
     PAYMENTS_STORE: z.enum(["postgres", "memory"]).default("postgres"),
+    SANDBOX_SIMULATOR_ENABLED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+    PAYMENTS_DEMO_SEED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+    ADMIN_DEV_TOKEN: optionalSecret,
   })
   .superRefine((env, ctx) => {
     const need = (keys: (keyof typeof env)[], why: string) => {
@@ -64,6 +67,9 @@ const serverSchema = clientSchema
         ctx.addIssue({ code: "custom", path: ["PAYMENT_PROVIDER"], message: "mock in production requires PAYMENT_MODE=sandbox and ALLOW_MOCK_IN_PRODUCTION=true (MVP demo only)" });
       }
       need(["RESEND_API_KEY"], "NODE_ENV=production");
+      if (env.ADMIN_DEV_TOKEN) {
+        ctx.addIssue({ code: "custom", path: ["ADMIN_DEV_TOKEN"], message: "not allowed in production" });
+      }
       if (env.PAYMENTS_STORE === "memory") {
         ctx.addIssue({ code: "custom", path: ["PAYMENTS_STORE"], message: "memory store is not allowed in production" });
       }
@@ -72,6 +78,9 @@ const serverSchema = clientSchema
       ctx.addIssue({ code: "custom", path: ["NEXT_PUBLIC_PAYMENT_MODE"], message: "must equal PAYMENT_MODE" });
     }
     if (env.PAYMENT_MODE === "live") {
+      if (env.SANDBOX_SIMULATOR_ENABLED) {
+        ctx.addIssue({ code: "custom", path: ["SANDBOX_SIMULATOR_ENABLED"], message: "must be false when PAYMENT_MODE=live" });
+      }
       if (env.ALLOW_MOCK_IN_PRODUCTION) {
         ctx.addIssue({ code: "custom", path: ["ALLOW_MOCK_IN_PRODUCTION"], message: "must be false when PAYMENT_MODE=live" });
       }

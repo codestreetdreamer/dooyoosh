@@ -62,14 +62,17 @@ export interface ConvertOrderInput {
 export type ConvertResult =
   | { status: "paid"; orderId: string; reference: string }
   | { status: "stock_conflict"; orderId: string; reference: string; conflictVariantIds: string[] }
-  | { status: "already_converted"; orderId: string; reference: string };
+  | { status: "already_converted"; orderId: string; reference: string }
+  | { status: "aborted"; conflictVariantIds: string[] };
 
 /** A DB transaction handle; concrete type is Drizzle's, kept opaque at the boundary. */
 export type TxLike = unknown;
 
 export interface InventoryService {
   reserve(checkoutId: string, lines: ReserveLine[], expiresAt: Date, tx?: TxLike): Promise<ReserveResult>;
-  convert(checkoutId: string, order: ConvertOrderInput, tx?: TxLike): Promise<ConvertResult>;
+  /** conflictMode "record" (default): non-active reservation -> stock_conflict order + auto-refund.
+   *  "abort": no order is written, returns { status: "aborted" } (Payme/Click Perform after expiry -> provider error). */
+  convert(checkoutId: string, order: ConvertOrderInput, opts?: { conflictMode?: "record" | "abort"; tx?: TxLike }): Promise<ConvertResult>;
   release(checkoutId: string, reason: ReleaseReason, tx?: TxLike): Promise<number>;
   releaseExpired(now?: Date, limit?: number): Promise<number>;
   adjust(input: AdjustStockInput, actorId: string | null): Promise<{ stockOnHand: number }>;
