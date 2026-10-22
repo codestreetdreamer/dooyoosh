@@ -52,6 +52,7 @@ const serverSchema = clientSchema
     PAYMENTS_DEMO_SEED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
     ADMIN_DEV_TOKEN: optionalSecret,
     TRUSTED_IP_HEADER: z.string().min(1).default("x-vercel-forwarded-for"),
+    NEWSLETTER_HASH_SECRET: optionalSecret.pipe(z.string().min(32).optional()),
   })
   .superRefine((env, ctx) => {
     const need = (keys: (keyof typeof env)[], why: string) => {
@@ -63,7 +64,7 @@ const serverSchema = clientSchema
       if (env.PAYMENT_PROVIDER === "mock" && !(env.PAYMENT_MODE === "sandbox" && env.ALLOW_MOCK_IN_PRODUCTION)) {
         ctx.addIssue({ code: "custom", path: ["PAYMENT_PROVIDER"], message: "mock in production requires PAYMENT_MODE=sandbox and ALLOW_MOCK_IN_PRODUCTION=true (MVP demo only)" });
       }
-      need(["RESEND_API_KEY"], "NODE_ENV=production");
+      need(["RESEND_API_KEY", "NEWSLETTER_HASH_SECRET"], "NODE_ENV=production");
       if (env.ADMIN_DEV_TOKEN) {
         ctx.addIssue({ code: "custom", path: ["ADMIN_DEV_TOKEN"], message: "not allowed in production" });
       }
