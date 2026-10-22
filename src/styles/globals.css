@@ -1,0 +1,98 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-ink: var(--color-text);
+  --color-muted: var(--color-text-muted);
+  --color-accent: var(--color-accent);
+  --color-accent-strong: var(--color-accent-strong);
+  --color-taupe: var(--color-taupe);
+  --color-line: var(--color-border);
+  --color-danger: var(--color-danger);
+  --color-success: var(--color-success);
+  --font-serif: var(--font-serif-family), "Cormorant Garamond", Georgia, serif;
+  --font-sans: var(--font-sans-family), Inter, system-ui, sans-serif;
+}
+
+html {
+  background: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+body {
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+}
+h1, h2, h3, .font-display {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Visible focus for keyboard users everywhere */
+:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 3px;
+}
+
+.eyebrow {
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 48px;
+  padding: 0 1.75rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.btn-primary { background: var(--color-text); color: var(--color-bg); }
+.btn-primary:hover { background: #33261f; }
+.btn-primary:disabled { background: var(--color-taupe); color: var(--color-text); cursor: not-allowed; }
+.btn-outline { border: 1px solid var(--color-text); color: var(--color-text); }
+.btn-outline:hover { background: var(--color-text); color: var(--color-bg); }
+
+.link-underline {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  transition: background-size 0.3s ease;
+}
+.link-underline:hover, .link-underline:focus-visible { background-size: 100% 1px; }
+
+.field {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.65rem 0.9rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+.field:focus-visible { outline: 2px solid var(--color-text); outline-offset: 0; border-color: var(--color-text); }
+.field[aria-invalid="true"] { border-color: var(--color-danger); }
+
+.prose-journal p { margin: 0 0 1.4em; line-height: 1.85; font-size: 1.075rem; }
+.prose-journal h2 { font-size: 1.9rem; margin: 2em 0 0.6em; }
+.prose-journal blockquote {
+  font-family: var(--font-serif);
+  font-size: 1.7rem;
+  line-height: 1.35;
+  border-left: 2px solid var(--color-accent);
+  padding-left: 1.25rem;
+  margin: 2em 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
 
-// next-intl plugin is wired by Frontend & Design once src/i18n/request.ts exists:
-//   import createNextIntlPlugin from "next-intl/plugin";
-//   export default createNextIntlPlugin()(nextConfig);
+// next-intl plugin wired by Frontend & Design (as pre-agreed in this file); config at src/i18n/request.ts.
+const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 // MVP CSP: 'unsafe-inline' scripts needed by Next.js without nonces (tracked in RELEASE_REPORT). Dev adds 'unsafe-eval' for HMR.
 const isDev = process.env.NODE_ENV !== "production";
 const csp = [
@@ -43,4 +43,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withNextIntl(nextConfig);

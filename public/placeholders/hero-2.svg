@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-label="Placeholder image">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E8E0D6"/><stop offset="1" stop-color="#F8F0ED"/></linearGradient></defs>
+<rect width="1600" height="900" fill="url(#g)"/><circle cx="1180" cy="300" r="140" fill="#BFA99C" opacity=".45"/>
+<path d="M300 900 V420 a220 220 0 0 1 440 0 V900 z" fill="#BFA99C" opacity=".55"/>
+<path d="M820 900 V520 a160 160 0 0 1 320 0 V900 z" fill="#BFA99C" opacity=".35"/>
+<rect x="0" y="780" width="1600" height="120" fill="#BFA99C" opacity=".25"/>
+<text x="1576" y="876" text-anchor="end" font-family="sans-serif" font-size="22" fill="#4A3931" letter-spacing="3">PLACEHOLDER</text>
+</svg>
