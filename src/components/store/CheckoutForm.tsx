@@ -74,6 +74,7 @@ export function CheckoutForm() {
   const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setF((prev) => ({ ...prev, [k]: e.target.value }));
     if (errors[k]) setErrors((prev) => ({ ...prev, [k]: undefined }));
+    if (banner === t("fixErrors")) setBanner(null);
   };
 
   const validate = (): FieldErrors => {

@@ -16,6 +16,7 @@
   --font-sans: var(--font-sans-family), Inter, system-ui, sans-serif;
 }
 
+@layer base {
 html {
   background: var(--color-bg);
   color: var(--color-text);
@@ -37,6 +38,9 @@ h1, h2, h3, .font-display {
   outline-offset: 3px;
 }
 
+}
+
+@layer components {
 .eyebrow {
   font-size: 0.72rem;
   letter-spacing: 0.22em;
@@ -91,6 +95,8 @@ h1, h2, h3, .font-display {
   border-left: 2px solid var(--color-accent);
   padding-left: 1.25rem;
   margin: 2em 0;
+}
+
 }
 
 @media (prefers-reduced-motion: reduce) {

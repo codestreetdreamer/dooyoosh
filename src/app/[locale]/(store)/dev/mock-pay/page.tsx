@@ -1,15 +1,14 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { setRequestLocale } from "next-intl/server";
-import { usingFixtures } from "@/lib/store/data-source";
-import { MockPay } from "@/dev-fixtures/MockPay";
 
 export const metadata: Metadata = { title: "Mock payment (dev only)", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
 
 /** DEV ONLY — simulated hosted payment page for the fixture layer. 404 unless fixtures are enabled. */
 export default async function MockPayPage({ params, searchParams }: { params: Promise<{ locale: string }>; searchParams: Promise<{ checkoutId?: string; token?: string }> }) {
-  if (!usingFixtures()) notFound();
+  if (!(process.env.NEXT_PUBLIC_USE_FIXTURES === "true" && process.env.NEXT_PUBLIC_VERCEL_ENV !== "production")) notFound();
+  const { MockPay } = await import("@/dev-fixtures/MockPay");
   const { locale } = await params;
   setRequestLocale(locale);
   const sp = await searchParams;

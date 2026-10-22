@@ -18,7 +18,8 @@ function serverOrigin(): string {
 }
 
 export async function call<N extends EndpointName>(name: N, args: RequestArgs<N> = {} as RequestArgs<N>): Promise<ApiResult<N>> {
-  if (usingFixtures()) {
+  // Env checks are written inline so the bundler constant-folds them and drops the fixture chunk from normal builds.
+  if (process.env.NEXT_PUBLIC_USE_FIXTURES === "true" && process.env.NEXT_PUBLIC_VERCEL_ENV !== "production") {
     const { mockApi } = await import("@/dev-fixtures/mock-api");
     return mockApi(name, args);
   }
