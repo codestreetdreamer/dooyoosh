@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import type { ValidateCartResponse } from "@/contracts/cart";
+import { MAX_LINE_QTY, type ValidateCartResponse } from "@/contracts/cart";
 import { Link } from "@/i18n/navigation";
 import { useBag, type BagLine } from "@/lib/store/bag";
 import { call } from "@/lib/store/data-source";
@@ -42,7 +42,8 @@ export function useValidatedBag() {
     const next: BagLine[] = current.map((l) => {
       const v = data.lines.find((x) => x.variantId === l.variantId);
       if (!v) return l;
-      const qty = v.available && v.maxQuantity > 0 && l.quantity > v.maxQuantity ? v.maxQuantity : l.quantity;
+      // Exact stock is never exposed (contract): only clamp to the hard per-line cap.
+      const qty = Math.min(l.quantity, MAX_LINE_QTY);
       if (qty !== l.quantity || v.unitPriceMinor !== l.snapshot.unitPriceMinor || data.currency !== l.snapshot.currency) changed = true;
       return { ...l, quantity: qty, snapshot: { ...l.snapshot, unitPriceMinor: v.unitPriceMinor, currency: data.currency } };
     });
@@ -91,7 +92,8 @@ export function BagView() {
             const name = v?.productName ?? l.snapshot.productName;
             const currency = data?.currency ?? l.snapshot.currency;
             const unit = v?.unitPriceMinor ?? l.snapshot.unitPriceMinor;
-            const maxQ = v?.available ? Math.max(1, v.maxQuantity) : 10;
+            const maxQ = MAX_LINE_QTY;
+            const blockedLine = !!issue && issue !== "insufficient_stock";
             return (
               <li key={l.variantId} className="grid grid-cols-[96px_1fr] gap-4 py-6 md:grid-cols-[120px_1fr_auto] md:gap-6">
                 <Link href={`/product/${l.snapshot.productSlug}`} className="relative block aspect-[4/5] bg-line">
@@ -107,10 +109,12 @@ export function BagView() {
                     <p role="alert" className="mt-2 text-sm text-danger">
                       {issueLabel(issue, t)}
                     </p>
+                  ) : v?.lowStock ? (
+                    <p className="mt-2 text-sm text-accent-strong">{t("lowStock")}</p>
                   ) : null}
                   <div className="mt-4 flex items-center gap-6">
                     <div className="flex items-center border border-line" role="group" aria-label={`${t("quantity")}: ${name}`}>
-                      <button type="button" className="h-10 w-10" aria-label={t("decrease", { name })} disabled={l.quantity <= 1 || !!issue} onClick={() => setQuantity(l.variantId, l.quantity - 1)}>−</button>
+                      <button type="button" className="h-10 w-10" aria-label={t("decrease", { name })} disabled={l.quantity <= 1 || blockedLine} onClick={() => setQuantity(l.variantId, l.quantity - 1)}>−</button>
                       <span className="w-8 text-center text-sm" aria-live="polite">{l.quantity}</span>
                       <button type="button" className="h-10 w-10" aria-label={t("increase", { name })} disabled={l.quantity >= maxQ || !!issue} onClick={() => setQuantity(l.variantId, l.quantity + 1)}>+</button>
                     </div>

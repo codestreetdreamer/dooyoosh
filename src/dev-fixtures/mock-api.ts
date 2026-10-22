@@ -124,7 +124,7 @@ export async function mockApi<N extends EndpointName>(name: N, args: RequestArgs
         const hit = all.find((x) => x.variant.id === it.variantId);
         if (!hit) {
           return { variantId: it.variantId, productSlug: "", productName: "Unavailable item", sku: "", size: null, colour: null, imageUrl: null,
-            unitPriceMinor: 0, quantity: 0, lineTotalMinor: 0, available: false, maxQuantity: 0, issue: "not_found" as const };
+            unitPriceMinor: 0, quantity: 0, lineTotalMinor: 0, available: false, lowStock: false, issue: "not_found" as const };
         }
         currency = hit.variant.currency;
         const available = hit.variant.available;
@@ -133,7 +133,7 @@ export async function mockApi<N extends EndpointName>(name: N, args: RequestArgs
           variantId: it.variantId, productSlug: hit.product.slug, productName: hit.product.name, sku: hit.variant.sku,
           size: hit.variant.size, colour: hit.variant.colour, imageUrl: hit.product.image?.url ?? null,
           unitPriceMinor: hit.variant.priceMinor, quantity: qty, lineTotalMinor: hit.variant.priceMinor * qty,
-          available, maxQuantity: available ? MAX_LINE_QTY : 0, issue: available ? null : ("out_of_stock" as const),
+          available, lowStock: false, issue: available ? null : ("out_of_stock" as const),
         };
       });
       return ok({ data: { currency, lines, subtotalMinor: lines.reduce((s, l) => s + l.lineTotalMinor, 0), allAvailable: lines.every((l) => l.available) } });

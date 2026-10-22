@@ -72,9 +72,10 @@ export function Header() {
         <Link href="/" className="justify-self-center" aria-label="Dooyoosh — home">
           <Wordmark />
         </Link>
-        <div className="flex items-center justify-end gap-4 lg:gap-6">
-          <Link href="/search" className="link-underline py-1 text-[0.74rem] uppercase tracking-[0.14em]" aria-current={isActive("/search") ? "page" : undefined}>
-            {t("search")}
+        <div className="flex items-center justify-end gap-1 lg:gap-6">
+          <Link href="/search" className="inline-flex h-11 min-w-11 items-center justify-center text-[0.74rem] uppercase tracking-[0.14em] lg:min-w-0" aria-current={isActive("/search") ? "page" : undefined}>
+            <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5 lg:hidden" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
+            <span className="sr-only lg:not-sr-only link-underline">{t("search")}</span>
           </Link>
           <Link href="/journal" className="link-underline hidden py-1 text-[0.74rem] uppercase tracking-[0.14em] lg:inline" aria-current={isActive("/journal") ? "page" : undefined}>
             {t("journal")}

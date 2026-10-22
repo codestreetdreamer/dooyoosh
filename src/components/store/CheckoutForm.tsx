@@ -55,6 +55,7 @@ export function CheckoutForm() {
   const [submitting, setSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const idem = useRef(new IdempotencyKeeper());
+  const [conflictIds, setConflictIds] = useState<Set<string>>(new Set());
   const bannerRef = useRef<HTMLDivElement>(null);
 
   const subtotal = bag.data?.subtotalMinor;
@@ -160,6 +161,8 @@ export function CheckoutForm() {
       if (code === "OUT_OF_STOCK" || code === "PRICE_CHANGED") {
         // Server rejected the bag (details.variantIds): refresh prices/availability from the server and let the customer review.
         idem.current.reset();
+        const ids = Array.isArray(res.error.details?.variantIds) ? (res.error.details.variantIds as unknown[]).map(String) : [];
+        setConflictIds(new Set(ids));
         await bag.revalidate();
       }
       requestAnimationFrame(() => bannerRef.current?.focus());
@@ -264,7 +267,7 @@ export function CheckoutForm() {
       <aside aria-labelledby="co-summary" className="lg:col-span-5">
         <div className="border border-line bg-surface p-6 lg:sticky lg:top-28">
           <h2 id="co-summary" className="text-2xl">{t("summary")}</h2>
-          {!bag.data ? <div className="mt-4"><Spinner label={t("loadingOptions")} /></div> : (
+          {!bag.data ? (bag.status === "error" ? <p role="alert" className="mt-4 text-sm text-danger">{tb("validateError")}</p> : <div className="mt-4"><Spinner label={tb("validating")} /></div>) : (
             <>
               <ul className="mt-4 divide-y divide-line text-sm">
                 {bag.data.lines.map((l) => (
@@ -272,7 +275,9 @@ export function CheckoutForm() {
                     <span>
                       {l.productName} <span className="text-muted">× {l.quantity}</span>
                       <span className="block text-xs text-muted">{[l.colour, l.size].filter(Boolean).join(" · ")}</span>
-                      {l.issue ? <span className="block text-xs text-danger">{issueLabel(l.issue, tb)}</span> : null}
+                      {l.issue ? <span className="block text-xs text-danger">{issueLabel(l.issue, tb)}</span>
+                        : conflictIds.has(l.variantId) ? <span className="block text-xs text-danger">{tb("conflictLine")}</span>
+                        : l.lowStock ? <span className="block text-xs text-accent-strong">{tb("lowStock")}</span> : null}
                     </span>
                     <Price amountMinor={l.lineTotalMinor} currency={bag.data!.currency} locale={locale} />
                   </li>
