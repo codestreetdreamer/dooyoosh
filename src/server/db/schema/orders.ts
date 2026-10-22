@@ -160,11 +160,12 @@ export const refunds = pgTable("refunds", {
   providerRefundId: text("provider_refund_id"),
   status: refundStatus("status").notNull().default("pending"),
   // B9: admin refund request idempotency
-  idempotencyKey: uuid("idempotency_key").notNull().unique(),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [
   check("refunds_amount_pos", sql`${t.amountCents} > 0`),
+  check("refunds_idempotency_key_len", sql`length(${t.idempotencyKey}) BETWEEN 1 AND 200`),
   // QA-11: provider refund ids are unique per provider, not globally
   unique("refunds_provider_refund_uq").on(t.provider, t.providerRefundId),
   index("refunds_payment_idx").on(t.paymentId),
@@ -211,6 +212,10 @@ export const providerTransactions = pgTable("provider_transactions", {
   amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
   currency: char("currency", { length: 3 }).notNull(),
   cancelReason: integer("cancel_reason"),
+  // 0005: monotonic sequence (global identity => monotonic per provider too); Payme GetStatement ordering
+  seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity(),
+  // 0005: provider's own timestamp in ms (Payme `time`), nullable
+  providerTime: bigint("provider_time", { mode: "number" }),
   raw: jsonb("raw"),
   createdAt: createdAt(),
   performedAt: timestamp("performed_at", { withTimezone: true }),
@@ -222,4 +227,7 @@ export const providerTransactions = pgTable("provider_transactions", {
   check("provider_transactions_currency_fmt", currencyCheck(t.currency)),
   index("provider_transactions_checkout_idx").on(t.checkoutId),
   index("provider_transactions_order_idx").on(t.orderId),
+  unique("provider_transactions_provider_seq_uq").on(t.provider, t.seq),
+  index("provider_transactions_provider_time_idx").on(t.provider, t.providerTime),
+  check("provider_transactions_provider_time_pos", sql`${t.providerTime} IS NULL OR ${t.providerTime} > 0`),
 ]);

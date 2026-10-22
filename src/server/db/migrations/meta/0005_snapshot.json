@@ -1,5 +1,5 @@
 {
-  "id": "efd3bc9d-6b74-4453-83ec-9e222eb6aba8",
+  "id": "56fecd0d-b4f4-4183-b409-acd747e6aaaf",
   "prevId": "617d663c-95ed-4c89-94c9-b8b0d8130f59",
   "version": "7",
   "dialect": "postgresql",
@@ -2510,6 +2510,29 @@
           "primaryKey": false,
           "notNull": false
         },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "provider_transactions_seq_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "9223372036854775807",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "provider_time": {
+          "name": "provider_time",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "raw": {
           "name": "raw",
           "type": "jsonb",
@@ -2573,6 +2596,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "provider_transactions_provider_time_idx": {
+          "name": "provider_transactions_provider_time_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_time",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2612,6 +2656,14 @@
             "provider",
             "provider_txn_id"
           ]
+        },
+        "provider_transactions_provider_seq_uq": {
+          "name": "provider_transactions_provider_seq_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "provider",
+            "seq"
+          ]
         }
       },
       "policies": {},
@@ -2623,6 +2675,10 @@
         "provider_transactions_currency_fmt": {
           "name": "provider_transactions_currency_fmt",
           "value": "\"provider_transactions\".\"currency\" ~ '^[A-Z]{3}$'"
+        },
+        "provider_transactions_provider_time_pos": {
+          "name": "provider_transactions_provider_time_pos",
+          "value": "\"provider_transactions\".\"provider_time\" IS NULL OR \"provider_transactions\".\"provider_time\" > 0"
         }
       },
       "isRLSEnabled": false
@@ -2679,7 +2735,7 @@
         },
         "idempotency_key": {
           "name": "idempotency_key",
-          "type": "uuid",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -2753,6 +2809,10 @@
         "refunds_amount_pos": {
           "name": "refunds_amount_pos",
           "value": "\"refunds\".\"amount_cents\" > 0"
+        },
+        "refunds_idempotency_key_len": {
+          "name": "refunds_idempotency_key_len",
+          "value": "length(\"refunds\".\"idempotency_key\") BETWEEN 1 AND 200"
         }
       },
       "isRLSEnabled": false
