@@ -11,7 +11,7 @@
     "accessories": "Accessories",
     "journal": "Journal",
     "bag": "Bag",
-    "bagCount": "Shopping bag, {count, plural, =0 {empty} one {# item} other {# items}}",
+    "bagCount": "Bag, {count, plural, one {# item} other {# items}}",
     "menu": "Menu",
     "openMenu": "Open menu",
     "closeMenu": "Close menu",
@@ -119,7 +119,7 @@
     "errorBody": "Your items are saved. Please try again.",
     "retry": "Try again",
     "reservedFor": "Reserved for {time}",
-    "issue_unpublished": "No longer available — please remove this item.",
+    "issue_unpublished": "This piece has been taken off sale — please remove it.",
     "issue_unknown": "This item can't be ordered right now — please remove it."
   },
   "checkout": {
@@ -176,8 +176,8 @@
     "refundedTitle": "This order has been refunded",
     "cancelledTitle": "This order was cancelled",
     "shippedTitle": "Your order is on its way",
-    "notFoundTitle": "Order not found",
-    "notFoundBody": "Check the link in your confirmation email.",
+    "notFoundTitle": "Order not found or link expired",
+    "notFoundBody": "This link may have expired or been opened in a different browser. Use the link in your confirmation email, or contact us with your order reference.",
     "reference": "Order reference",
     "status": "Status",
     "items": "Items",
