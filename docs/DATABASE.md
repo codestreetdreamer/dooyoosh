@@ -50,7 +50,7 @@ Errors are `RAISE EXCEPTION '<CODE>' USING ERRCODE = 'P0001', DETAIL = <json>`; 
 |---|---|---|
 | `OUT_OF_STOCK` | json array of variant ids (ALL failing lines: unknown, inactive, unpublished, short) | 409, `details.variantIds` |
 | `PRICE_CHANGED` | json array of variant ids (snapshot `unitPriceMinor` ≠ current price) | 409, `details.variantIds` |
-| `IDEMPOTENCY_CONFLICT` | `{"checkout_id"}` — same idempotencyKey, different payload hash | 409 (wrapper throws `IdempotencyConflictError`; no ERROR_CODES entry yet) |
+| `IDEMPOTENCY_CONFLICT` | `{"checkout_id"}` — same idempotencyKey, different payload hash | 409 `IDEMPOTENCY_CONFLICT` (wrapper throws `ApiError.idempotencyConflict()`) |
 | `VALIDATION_ERROR` | `{"field": ...}` | 400 |
 | `NOT_FOUND` | `{"checkout_id"|"variant_id"|"order_id": ...}` | 404 |
 | `INVALID_STATE` | `{"checkout_status"|"reason": ...}` | 409/400 |
@@ -146,7 +146,7 @@ column grants (no stock counts) and the `security_invoker` views apply exactly a
 | `GET /categories` | `catalog/categories.ts` | active tree; name/description fall back to `en`, then slug |
 | `GET /search` | `catalog/search.ts` | prefix tsquery built from letters/digits only (no tsquery injection); products + articles, rank-merged |
 | `GET /articles`, `GET /articles/{slug}` | `journal/articles.ts` | published + `published_at <= now()`; tags; shoppable products; keyset cursor |
-| `POST /cart/validate` | `catalog/cart.ts` | public facts as anon; `maxQuantity = least(on_hand − reserved, 10)` computed in SQL by the server role (exact stock never leaves the DB); issues `out_of_stock / insufficient_stock / inactive / not_found` |
+| `POST /cart/validate` | `catalog/cart.ts` | public facts as anon; `maxQuantity = least(on_hand − reserved, 10)` computed in SQL by the server role (exact stock never leaves the DB); issues `out_of_stock / insufficient_stock / inactive / unpublished / not_found` |
 | `GET /shipping/options` | `catalog/shipping-options.ts` | 422 `COUNTRY_NOT_SHIPPABLE`; rate tier by `subtotalMinor` hint; price 0 when hint ≥ freeOver |
 | `POST /newsletter`, `GET /newsletter/confirm` | `journal/newsletter.ts` | always 202; honeypot + per-IP (10/10 min) and per-email (3/h) in-memory limits; upsert is idempotent; confirm token stored as sha256 hex, 7-day TTL. **Confirmation email not sent yet** (hook `onToken` for Payments' email module) |
 Integration test: `src/server/db/tests/api_smoke.sh` (82 curl checks incl. 400/404/422) against `next dev` + a local DB from `apply-local.sh`.

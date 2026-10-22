@@ -6,7 +6,6 @@
  */
 import "server-only";
 import { MAX_LINE_QTY, type ValidateCartRequest, type ValidateCartResponse, type ValidatedCartLine } from "@/contracts/cart";
-import { serverEnv } from "@/lib/env";
 import { asAnon, getSql } from "../db/client";
 import { mediaUrl, num } from "./shared";
 
@@ -25,14 +24,18 @@ export async function validateCart(req: ValidateCartRequest): Promise<ValidateCa
         left join public.product_translations t on t.product_id = sp.id and t.locale = ${req.locale}
         left join public.product_translations te on te.product_id = sp.id and te.locale = 'en'
        where sv.id = any(${ids}::uuid[])`),
-    // server-only: existence + capped purchasable quantity (never the raw count)
-    getSql()<{ id: string; cap: number }[]>`
-      select v.id, greatest(0, least(v.stock_on_hand - v.stock_reserved, ${MAX_LINE_QTY}))::int as cap
-        from public.product_variants v where v.id = any(${ids}::uuid[])`,
+    // server-only: existence, active/published state + capped purchasable quantity (never the raw count)
+    getSql()<{ id: string; cap: number; active: boolean; published: boolean }[]>`
+      select v.id, greatest(0, least(v.stock_on_hand - v.stock_reserved, ${MAX_LINE_QTY}))::int as cap,
+             v.is_active as active,
+             (p.status = 'published' and p.archived_at is null and p.published_at <= now()) as published
+        from public.product_variants v join public.products p on p.id = v.product_id
+       where v.id = any(${ids}::uuid[])`,
   ]);
   const byId = new Map(pub.map((r) => [r.id, r]));
   const capById = new Map(caps.map((r) => [r.id, r.cap]));
-  const currency = pub[0]?.currency.trim() ?? serverEnv().DEFAULT_CURRENCY;
+  const stateById = new Map(caps.map((r) => [r.id, r]));
+  const currency = pub[0]?.currency.trim() ?? (await marketCurrency());
 
   const lines: ValidatedCartLine[] = req.items.map((item) => {
     const r = byId.get(item.variantId);
@@ -40,8 +43,8 @@ export async function validateCart(req: ValidateCartRequest): Promise<ValidateCa
       return {
         variantId: item.variantId, productSlug: "", productName: "", sku: "", size: null, colour: null, imageUrl: null,
         unitPriceMinor: 0, quantity: 0, lineTotalMinor: 0, available: false, maxQuantity: 0,
-        // exists in DB but not public => inactive/unpublished; otherwise unknown id
-        issue: capById.has(item.variantId) ? "inactive" : "not_found",
+        // exists in DB but not public: variant switched off => inactive; product draft/archived/scheduled => unpublished
+        issue: !stateById.has(item.variantId) ? "not_found" : !stateById.get(item.variantId)!.active ? "inactive" : "unpublished",
       };
     }
     const max = capById.get(item.variantId) ?? 0;
@@ -60,4 +63,10 @@ export async function validateCart(req: ValidateCartRequest): Promise<ValidateCa
     subtotalMinor: lines.reduce((s, l) => s + l.lineTotalMinor, 0),
     allAvailable: lines.every((l) => l.issue === null),
   };
+}
+
+/** Currency of the active market (used only when no line is public). */
+async function marketCurrency(): Promise<string> {
+  const [m] = await asAnon((tx) => tx<{ currency: string }[]>`select currency from public.markets where is_active order by code limit 1`);
+  return m?.currency.trim() ?? "UZS";
 }

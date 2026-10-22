@@ -5,7 +5,7 @@
 import "server-only";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { serverEnv } from "@/lib/env";
+import { dbEnv } from "@/lib/env";
 import * as schema from "./schema";
 
 export type Db = PostgresJsDatabase<typeof schema>;
@@ -15,7 +15,7 @@ let db: Db | undefined;
 
 /** Raw postgres-js client (owner role behind DATABASE_URL; bypasses RLS). Server only. */
 export function getSql(): postgres.Sql {
-  client ??= postgres(serverEnv().DATABASE_URL, { prepare: false, max: 5, idle_timeout: 20 });
+  client ??= postgres(dbEnv().DATABASE_URL, { prepare: false, max: 5, idle_timeout: 20 });
   return client;
 }
 

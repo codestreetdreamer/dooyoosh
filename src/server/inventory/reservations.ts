@@ -37,7 +37,7 @@ export function mapDbError(e: unknown): never {
     case "NOT_FOUND":
       throw ApiError.notFound();
     case "IDEMPOTENCY_CONFLICT":
-      throw new IdempotencyConflictError();
+      throw ApiError.idempotencyConflict();
     case "VALIDATION_ERROR":
     case "INSUFFICIENT_STOCK":
     case "INVALID_STATE":
@@ -65,23 +65,11 @@ export interface ConvertOptions {
   tx?: TxLike;
 }
 
-/**
- * Same idempotencyKey reused with a different createCheckout payload (DB: IDEMPOTENCY_CONFLICT).
- * The API should answer 409; `src/contracts/common.ERROR_CODES` has no such code yet (Architect to decide).
- */
-export class IdempotencyConflictError extends Error {
-  readonly status = 409;
-  constructor() {
-    super("IDEMPOTENCY_CONFLICT");
-    this.name = "IdempotencyConflictError";
-  }
-}
-
 export const inventory: InventoryService & {
   /** reserve + idempotency payload check (p_payload_hash = hex sha256 of the createCheckout payload). */
   reserveWith(checkoutId: string, lines: ReserveLine[], expiresAt: Date, opts: { payloadHash?: string; tx?: TxLike }): Promise<ReserveResult>;
   convertWith(checkoutId: string, order: ConvertOrderInput, opts: ConvertOptions): Promise<ConvertResult>;
-  /** checkout id stored for an idempotencyKey (null if none); throws IdempotencyConflictError if the payload hash differs. */
+  /** checkout id stored for an idempotencyKey (null if none); throws ApiError IDEMPOTENCY_CONFLICT (409) if the payload hash differs. */
   checkoutIdForIdempotencyKey(key: string, payloadHash: string, tx?: TxLike): Promise<string | null>;
   restockOrder(orderId: string, reason?: "return" | "cancellation", actorId?: string | null, note?: string, tx?: TxLike): Promise<number>;
 } = {

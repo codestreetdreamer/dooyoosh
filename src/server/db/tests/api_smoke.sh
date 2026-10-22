@@ -94,6 +94,9 @@ check "cart insufficient_stock"      200 ".data.lines[0].issue==\"insufficient_s
 psqlq "update product_variants set is_active=false where id='$INS2'" >/dev/null
 check "cart inactive"                200 ".data.lines[0].issue==\"inactive\" and .data.lines[0].available==false" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS2\",\"quantity\":1}]}"
 psqlq "update product_variants set is_active=true where id='$INS2'" >/dev/null
+psqlq "update products set status='draft' where id=(select product_id from product_variants where id='$INS2')" >/dev/null
+check "cart unpublished"             200 ".data.lines[0].issue==\"unpublished\" and .data.lines[0].available==false" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS2\",\"quantity\":1}]}"
+psqlq "update products set status='published' where id=(select product_id from product_variants where id='$INS2')" >/dev/null
 check "cart not_found"               200 ".data.lines[0].issue==\"not_found\"" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$NOPE\",\"quantity\":1}]}"
 check "cart 400 qty 0"               400 '.error.code=="VALIDATION_ERROR"' POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS\",\"quantity\":0}]}"
 check "cart 400 qty 11"              400 '.error.code=="VALIDATION_ERROR"' POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS\",\"quantity\":11}]}"
@@ -111,7 +114,7 @@ check "shipping 400 lowercase"       400 '.error.code=="VALIDATION_ERROR"' GET "
 check "shipping 400 missing"         400 '.error.code=="VALIDATION_ERROR"' GET "/shipping/options"
 # ---- newsletter ----
 EM="smoke+$RANDOM@example.com"
-check "newsletter signup"            202 '.data.status=="pending_confirmation"' POST "/newsletter" "{\"email\":\"${EM^^}\"}"
+check "newsletter signup"            202 '.data.status=="pending_confirmation"' POST "/newsletter" "{\"email\":\"  ${EM^^} \"}"
 [[ $(psqlq "select status from newsletter_subscribers where email='$EM'") == pending ]] && { pass=$((pass+1)); echo "PASS newsletter stored lower-case pending"; } || { fail=$((fail+1)); echo "FAIL newsletter row"; }
 check "newsletter repeat (same 202)" 202 '.data.status=="pending_confirmation"' POST "/newsletter" "{\"email\":\"$EM\"}"
 [[ $(psqlq "select count(*) from newsletter_subscribers where email='$EM'") == 1 ]] && { pass=$((pass+1)); echo "PASS newsletter idempotent (1 row)"; } || { fail=$((fail+1)); echo "FAIL newsletter duplicate rows"; }

@@ -3,7 +3,7 @@ import "server-only";
 import type { ProductCard, ProductImage } from "@/contracts/catalog";
 import type { Locale } from "@/contracts/common";
 import { ApiError } from "@/lib/errors";
-import { clientEnv } from "@/lib/env";
+import { dbEnv } from "@/lib/env";
 import type { Tx } from "../db/client";
 
 export const STORAGE_BUCKET = "product-images";
@@ -12,7 +12,7 @@ export const STORAGE_BUCKET = "product-images";
 export function mediaUrl(path: string | null | undefined): string | null {
   if (!path) return null;
   if (/^https:\/\//.test(path)) return path;
-  const base = clientEnv().NEXT_PUBLIC_SUPABASE_URL.replace(/\/+$/, "");
+  const base = dbEnv().NEXT_PUBLIC_SUPABASE_URL.replace(/\/+$/, "");
   const key = path.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/");
   return `${base}/storage/v1/object/public/${STORAGE_BUCKET}/${key}`;
 }
