@@ -44,6 +44,10 @@ const serverSchema = clientSchema
     EMAIL_FROM: z.string().min(3),
     DEFAULT_CURRENCY: currencyCode,
     CRON_SECRET: z.string().min(16),
+    /** HMAC key for guest checkout/order access tokens (only the hash is stored) */
+    ORDER_TOKEN_SECRET: z.string().min(32),
+    /** memory = tests/local demo only; refused in production */
+    PAYMENTS_STORE: z.enum(["postgres", "memory"]).default("postgres"),
   })
   .superRefine((env, ctx) => {
     const need = (keys: (keyof typeof env)[], why: string) => {
@@ -56,6 +60,9 @@ const serverSchema = clientSchema
         ctx.addIssue({ code: "custom", path: ["PAYMENT_PROVIDER"], message: "mock is not allowed in production" });
       }
       need(["RESEND_API_KEY"], "NODE_ENV=production");
+      if (env.PAYMENTS_STORE === "memory") {
+        ctx.addIssue({ code: "custom", path: ["PAYMENTS_STORE"], message: "memory store is not allowed in production" });
+      }
     }
     if (env.PAYMENT_MODE === "live") {
       if (env.PAYMENT_PROVIDER === "mock") {
@@ -73,7 +80,7 @@ const serverSchema = clientSchema
         need(["STRIPE_SECRET_KEY", "PAYMENT_WEBHOOK_SECRET"], "PAYMENT_PROVIDER=stripe");
         break;
       case "payme":
-        need(["PAYME_MERCHANT_ID", "PAYME_KEY"], "PAYMENT_PROVIDER=payme");
+        need(["PAYME_MERCHANT_ID", "PAYME_KEY", "PAYME_LOGIN"], "PAYMENT_PROVIDER=payme");
         break;
       case "click":
         need(["CLICK_SERVICE_ID", "CLICK_MERCHANT_ID", "CLICK_SECRET_KEY"], "PAYMENT_PROVIDER=click");

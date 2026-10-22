@@ -102,6 +102,35 @@ export interface WebhookRequestMeta {
   ip: string | null;
 }
 
+/** Row of provider_transactions: Payme/Click create a txn before our order exists. UNIQUE(provider, providerTxnId). */
+export interface ProviderTransaction {
+  provider: PaymentProviderName;
+  providerTxnId: string;
+  checkoutId: string;
+  orderId: string | null;
+  amountMinor: number;
+  state: "created" | "performed" | "canceled" | "canceled_after_perform";
+  createdAt: Date;
+  performedAt: Date | null;
+  canceledAt: Date | null;
+  cancelReason: number | null;
+}
+
+/** Store access a synchronous callback handler may use. Implemented by Payments & Orders (src/server/payments/store.ts). */
+export interface ProviderCallbackPort {
+  getCheckout(checkoutId: string): Promise<{ id: string; status: string; amountMinor: number; currency: string; reservedUntil: Date } | null>;
+  getTransaction(provider: PaymentProviderName, providerTxnId: string): Promise<ProviderTransaction | null>;
+  saveTransaction(tx: ProviderTransaction): Promise<ProviderTransaction>;
+  /** dedupe via payment_events + convert_checkout_to_order / refund; same path as verifyWebhook events */
+  settle(event: NormalizedPaymentEvent): Promise<WebhookOutcome>;
+}
+
+export interface ProviderCallbackResult {
+  status: number;
+  body: string;
+  headers?: Record<string, string>;
+}
+
 export interface PaymentProvider {
   readonly name: PaymentProviderName;
   readonly mode: PaymentMode;
@@ -110,6 +139,12 @@ export interface PaymentProvider {
   createSession(checkout: CheckoutForPayment): Promise<CreateSessionResult>;
   /** MUST be given the raw request body string. Throws ApiError(UNAUTHORIZED) on bad signature/token. */
   verifyWebhook(rawBody: string, headers: Headers, meta?: WebhookRequestMeta): Promise<VerifiedWebhook>;
+  /**
+   * Synchronous request/response providers (Payme JSON-RPC, Click prepare/complete). When present the
+   * webhook route calls this INSTEAD of verifyWebhook. It must verify auth/signature itself first,
+   * compare amounts to the DB, and return the provider's own error body (HTTP 200) on business errors.
+   */
+  handleCallback?(rawBody: string, headers: Headers, meta: WebhookRequestMeta, port: ProviderCallbackPort): Promise<ProviderCallbackResult>;
   /** Cancel an unpaid session before releasing stock (expiry cron). Idempotent; no-op if already closed. */
   cancel(providerSessionId: string): Promise<void>;
   refund(input: RefundInput): Promise<RefundResult>;

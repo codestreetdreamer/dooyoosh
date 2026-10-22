@@ -74,5 +74,9 @@ export const checkoutSnapshotLine = z.object({
   unitPriceMinor: nonNegativeMinor,
   quantity: z.number().int().positive(),
   lineTotalMinor: nonNegativeMinor,
+  /** fiscal snapshot (ZRU-792, spec §13); copied to order_items. `DEMO-` prefix = never fiscalise / never charge live */
+  ikpuCode: z.string().min(1).max(32).nullable(),
+  packageCode: z.string().min(1).max(32).nullable(),
+  vatRateBp: z.number().int().min(0).max(10000),
 });
 export type CheckoutSnapshotLine = z.infer<typeof checkoutSnapshotLine>;
