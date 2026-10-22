@@ -23,15 +23,15 @@ Folder `src/server/db/migrations/`, journal `meta/_journal.json`. Apply **in thi
 | `0004_storage_media.sql` | hand-written | Storage bucket `product-images` + policies |
 | `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default; CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` (checkouts, orders); `checkouts.idempotency_payload_hash` (64-hex, required when `idempotency_key` set); `provider_transactions.seq` (bigint identity) + `provider_time` (bigint ms, nullable, index `(provider, provider_time)`, UNIQUE `(provider, seq)`); `refunds.idempotency_key` uuid → **text** (NOT NULL UNIQUE, 1..200). applied to staging after QA green |
 | `0006_convert_no_vat_fallback.sql` | hand-written (incremental) | `convert_checkout_to_order` modes `record`/`abort` (abort returns `aborted`, writes nothing), no 1200 VAT fallback; `reserve_checkout(…, p_payload_hash)`; `checkout_id_for_idempotency_key()`. applied to staging after QA green |
-| `0007_storage_no_public_list.sql` | hand-written (incremental) | QA P3: drops the anon/authenticated SELECT policy on `storage.objects` for `product-images` (no public listing); adds owner/editor-only SELECT (admin media library). Public URL downloads unaffected. **Local only until QA green** |
+| `0007_storage_no_public_list.sql` | hand-written (incremental) | QA P3: drops the anon/authenticated SELECT policy on `storage.objects` for `product-images` (no public listing); adds owner/editor-only SELECT (admin media library). Public URL downloads unaffected. Applied to staging after QA green |
 
-Staging `bmigqxmswskihqrkeezh` has 0000–0006 (0000–0004 applied 2026-10-22 23:24, 0005/0006 at 23:47 UTC after QA green on a4e2c69). Later migrations go to staging only after QA green.
+Staging `bmigqxmswskihqrkeezh` has 0000–0007 (0000–0004 applied 2026-10-22 23:24, 0005/0006 at 23:47 UTC after QA green on a4e2c69, 0007 at 23:51 UTC after QA green on 5dc4fc8). Later migrations go to staging only after QA green.
 
 Workflow:
 1. Edit `src/server/db/schema/*.ts` → `pnpm db:generate` (new numbered file). Hand-written SQL: `pnpm drizzle-kit generate --custom --name <name>`.
 2. Test locally: `src/server/db/tests/run-all.sh` (see §7).
 3. Apply: `pnpm db:migrate` with `DATABASE_URL`, or the Supabase MCP `apply_migration` with the same names (as done for staging).
-4. Never edit a migration that has been applied to Supabase; add a new one (0000–0006 are frozen: applied to staging). From 0005 on, generation is incremental.
+4. Never edit a migration that has been applied to Supabase; add a new one (0000–0007 are frozen: applied to staging). From 0005 on, generation is incremental.
 5. Staging gets new migrations only after QA gives green.
 
 Supabase-specific: migrations run as `postgres` (table owner). The 0001/0003 grants **revoke Supabase's default ALL grants** from `anon`/`authenticated`; new tables are not exposed until a later migration grants them.
@@ -147,7 +147,7 @@ column grants (no stock counts) and the `security_invoker` views apply exactly a
 | `GET /categories` | `catalog/categories.ts` | active tree; name/description fall back to `en`, then slug |
 | `GET /search` | `catalog/search.ts` | prefix tsquery built from letters/digits only (no tsquery injection); products + articles, rank-merged |
 | `GET /articles`, `GET /articles/{slug}` | `journal/articles.ts` | published + `published_at <= now()`; tags; shoppable products; keyset cursor |
-| `POST /cart/validate` | `catalog/cart.ts` | public facts as anon; `maxQuantity = least(on_hand − reserved, 10)` computed in SQL by the server role (exact stock never leaves the DB); issues `out_of_stock / insufficient_stock / inactive / unpublished / not_found` |
+| `POST /cart/validate` | `catalog/cart.ts` | public facts as anon; stock facts computed by the server role **as booleans inside SQL** (`in_stock`, enough-for-requested-qty, `lowStock` = sellable ≤ 3) — no count ever leaves the DB. Quantities 1..`MAX_LINE_QTY` (10) per contract. Over-stock request keeps its quantity and gets `insufficient_stock` (never clamped). Issues `out_of_stock / insufficient_stock / inactive / unpublished / not_found`. Residual: a client can binary-search the count by repeating requests with different quantities (≤ 10) — accepted trade-off (same as any shop's "only N left" UX). |
 | `GET /shipping/options` | `catalog/shipping-options.ts` | 422 `COUNTRY_NOT_SHIPPABLE`; rate tier by `subtotalMinor` hint; price 0 when hint ≥ freeOver |
 | `POST /newsletter`, `GET /newsletter/confirm` | `journal/newsletter.ts` | always 202; honeypot + per-IP (10/10 min) and per-email (3/h) in-memory limits; upsert is idempotent; confirm token stored as sha256 hex, 7-day TTL. **Confirmation email not sent yet** (hook `onToken` for Payments' email module) |
 Integration test: `src/server/db/tests/api_smoke.sh` (82 curl checks incl. 400/404/422) against `next dev` + a local DB from `apply-local.sh`.

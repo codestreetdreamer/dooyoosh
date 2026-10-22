@@ -26,7 +26,7 @@ Rule: nothing is "done" until its row here is ✅. Each agent updates only its o
 | DB tests (src/server/db/tests: RLS, functions, concurrency) | ✅ local all pass; RLS + functions also pass on staging (rolled back) | Backend & Database |
 | docs/DATABASE.md, src/server/db/supabase.types.ts | ✅ 2026-10-22 | Backend & Database |
 | Migrations 0005/0006 (VAT no default, token/idempotency hashes, provider_transactions seq/time, convert record/abort) | ✅ applied to staging 2026-10-22 23:47 UTC after QA green; advisors INFO only | Backend & Database |
-| Migration 0007 (product-images: no public listing, QA P3) | ⏳ local only, waiting for QA green | Backend & Database |
+| Migration 0007 (product-images: no public listing, QA P3) | ✅ applied to staging 2026-10-22 23:51 UTC after QA green; advisors INFO only | Backend & Database |
 | Public API routes (products, facets, categories, search, articles, cart/validate, shipping/options, newsletter) | ✅ local curl suite 83/83; admin endpoints ❌ not started | Backend & Database |
 | Disable public sign-ups in Supabase dashboard (Authentication → Sign In / Providers) | ❌ owner action (not a migration) | Mirfozil |
 | `.env.example` + Zod env validation (`src/lib/env.ts`, refuses `mock` in production/live) | ✅ 2026-10-22 | Architect (per OWNERSHIP.md) |

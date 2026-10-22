@@ -23,7 +23,7 @@ OOS=$(psqlq "select id from product_variants where sku='DEMO-01-XS-IVO'")
 INS=$(psqlq "select v.id from product_variants v where v.sku='DEMO-02-S-IVO'")
 INS2=$(psqlq "select v.id from product_variants v where v.sku like 'DEMO-03-%' order by sku limit 1")
 NOPE=00000000-0000-4000-8000-00000000dead
-NOSTOCK_FIELDS='[.. | objects | keys[]] | map(select(test("stock|onHand|reserved"; "i"))) | length == 0'
+NOSTOCK_FIELDS='[.. | objects | keys[]] | map(select(test("stock|onHand|reserved|maxQuantity"; "i") and . != "lowStock")) | length == 0'
 
 # ---- GET /products ----
 check "products list default"        200 "(.data|length)==12 and .page.limit==24 and .page.cursor==null and ($NOSTOCK_FIELDS)" GET "/products"
@@ -87,10 +87,11 @@ check "article draft 404"            404 '.error.code=="NOT_FOUND"' GET "/articl
 check "article 404"                  404 '.error.code=="NOT_FOUND"' GET "/articles/no-such-article"
 check "article 400"                  400 '.error.code=="VALIDATION_ERROR"' GET "/articles/BAD%20SLUG"
 # ---- cart/validate ----
-check "cart ok"                      200 ".data.allAvailable==true and .data.currency==\"UZS\" and .data.lines[0].quantity==2 and .data.subtotalMinor==(.data.lines|map(.lineTotalMinor)|add) and .data.lines[0].maxQuantity<=10 and ($NOSTOCK_FIELDS)" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS\",\"quantity\":2},{\"variantId\":\"$INS2\",\"quantity\":1}]}"
-check "cart out_of_stock"            200 ".data.allAvailable==false and .data.lines[0].issue==\"out_of_stock\" and .data.lines[0].quantity==0 and .data.lines[0].maxQuantity==0" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$OOS\",\"quantity\":1}]}"
+check "cart ok"                      200 ".data.allAvailable==true and .data.currency==\"UZS\" and .data.lines[0].quantity==2 and .data.subtotalMinor==(.data.lines|map(.lineTotalMinor)|add) and (.data.lines[0].lowStock|type)==\"boolean\" and ($NOSTOCK_FIELDS)" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS\",\"quantity\":2},{\"variantId\":\"$INS2\",\"quantity\":1}]}"
+check "cart out_of_stock"            200 ".data.allAvailable==false and .data.lines[0].issue==\"out_of_stock\" and .data.lines[0].quantity==0 and .data.lines[0].lowStock==false" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$OOS\",\"quantity\":1}]}"
 psqlq "select adjust_stock('$INS2', 2-(stock_on_hand-stock_reserved), 'adjustment', 'smoke', null) from product_variants where id='$INS2' and stock_on_hand-stock_reserved<>2" >/dev/null
-check "cart insufficient_stock"      200 ".data.lines[0].issue==\"insufficient_stock\" and .data.lines[0].maxQuantity==2 and .data.lines[0].quantity==2" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS2\",\"quantity\":5}]}"
+check "cart insufficient_stock"      200 ".data.lines[0].issue==\"insufficient_stock\" and .data.lines[0].quantity==5 and .data.lines[0].lowStock==true and .data.allAvailable==false and ($NOSTOCK_FIELDS)" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS2\",\"quantity\":5}]}"
+check "cart low stock, enough"       200 ".data.lines[0].issue==null and .data.lines[0].lowStock==true and .data.lines[0].quantity==2" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS2\",\"quantity\":2}]}"
 psqlq "update product_variants set is_active=false where id='$INS2'" >/dev/null
 check "cart inactive"                200 ".data.lines[0].issue==\"inactive\" and .data.lines[0].available==false" POST "/cart/validate" "{\"items\":[{\"variantId\":\"$INS2\",\"quantity\":1}]}"
 psqlq "update product_variants set is_active=true where id='$INS2'" >/dev/null

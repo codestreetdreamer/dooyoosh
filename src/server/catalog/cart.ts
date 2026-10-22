@@ -1,18 +1,24 @@
 /**
  * POST /cart/validate (owner: Backend & Database). The client cart is only a hint; prices/availability come from the DB.
  * Public facts (name, price, image, active/published) are read as `anon` through storefront_variants (RLS applies).
- * `maxQuantity` needs stock, which anon cannot read: it is computed server-side as least(on_hand - reserved, MAX_LINE_QTY)
- * INSIDE the SQL, so exact stock never leaves the database (contract: capped at MAX_LINE_QTY).
+ * Stock facts need columns anon cannot read: the server role computes ONLY booleans inside SQL
+ * (in_stock, enough for the requested quantity, lowStock = sellable <= LOW_STOCK_THRESHOLD), so no count ever leaves the DB.
+ * Line quantities are validated by the contract (1..MAX_LINE_QTY); an over-stock request keeps its quantity and gets
+ * issue "insufficient_stock" (never clamped, which would reveal the count).
  */
 import "server-only";
-import { MAX_LINE_QTY, type ValidateCartRequest, type ValidateCartResponse, type ValidatedCartLine } from "@/contracts/cart";
+import { type ValidateCartRequest, type ValidateCartResponse, type ValidatedCartLine } from "@/contracts/cart";
 import { asAnon, getSql } from "../db/client";
 import { mediaUrl, num } from "./shared";
+
+/** "Only a few left" threshold (contract validatedCartLine.lowStock: sellable stock <= 3). */
+export const LOW_STOCK_THRESHOLD = 3;
 
 type PublicRow = { id: string; sku: string; size: string | null; colour: string | null; price_cents: string; currency: string; slug: string; name: string; image_path: string | null };
 
 export async function validateCart(req: ValidateCartRequest): Promise<ValidateCartResponse["data"]> {
   const ids = req.items.map((i) => i.variantId);
+  const qtys = req.items.map((i) => i.quantity);
   const [pub, caps] = await Promise.all([
     asAnon((tx) => tx<PublicRow[]>`
       select sv.id, sv.sku, sv.size, sv.colour, sv.price_cents, sv.currency, sp.slug,
@@ -24,16 +30,16 @@ export async function validateCart(req: ValidateCartRequest): Promise<ValidateCa
         left join public.product_translations t on t.product_id = sp.id and t.locale = ${req.locale}
         left join public.product_translations te on te.product_id = sp.id and te.locale = 'en'
        where sv.id = any(${ids}::uuid[])`),
-    // server-only: existence, active/published state + capped purchasable quantity (never the raw count)
-    getSql()<{ id: string; cap: number; active: boolean; published: boolean }[]>`
-      select v.id, greatest(0, least(v.stock_on_hand - v.stock_reserved, ${MAX_LINE_QTY}))::int as cap,
-             v.is_active as active,
-             (p.status = 'published' and p.archived_at is null and p.published_at <= now()) as published
-        from public.product_variants v join public.products p on p.id = v.product_id
-       where v.id = any(${ids}::uuid[])`,
+    // server-only: existence, active/published state and stock BOOLEANS only (never a count)
+    getSql()<{ id: string; active: boolean; in_stock: boolean; enough: boolean; low_stock: boolean }[]>`
+      select v.id, v.is_active as active,
+             (v.stock_on_hand - v.stock_reserved) > 0 as in_stock,
+             (v.stock_on_hand - v.stock_reserved) >= r.qty as enough,
+             (v.stock_on_hand - v.stock_reserved) <= ${LOW_STOCK_THRESHOLD} as low_stock
+        from unnest(${ids}::uuid[], ${qtys}::int[]) as r(id, qty)
+        join public.product_variants v on v.id = r.id`,
   ]);
   const byId = new Map(pub.map((r) => [r.id, r]));
-  const capById = new Map(caps.map((r) => [r.id, r.cap]));
   const stateById = new Map(caps.map((r) => [r.id, r]));
   const currency = pub[0]?.currency.trim() ?? (await marketCurrency());
 
@@ -42,19 +48,20 @@ export async function validateCart(req: ValidateCartRequest): Promise<ValidateCa
     if (!r) {
       return {
         variantId: item.variantId, productSlug: "", productName: "", sku: "", size: null, colour: null, imageUrl: null,
-        unitPriceMinor: 0, quantity: 0, lineTotalMinor: 0, available: false, maxQuantity: 0,
+        unitPriceMinor: 0, quantity: 0, lineTotalMinor: 0, available: false, lowStock: false,
         // exists in DB but not public: variant switched off => inactive; product draft/archived/scheduled => unpublished
         issue: !stateById.has(item.variantId) ? "not_found" : !stateById.get(item.variantId)!.active ? "inactive" : "unpublished",
       };
     }
-    const max = capById.get(item.variantId) ?? 0;
+    const st = stateById.get(item.variantId);
+    const inStock = st?.in_stock ?? false;
     const unit = num(r.price_cents);
-    const qty = Math.min(item.quantity, max);
+    const qty = inStock ? item.quantity : 0;
     return {
       variantId: r.id, productSlug: r.slug, productName: r.name, sku: r.sku, size: r.size, colour: r.colour,
       imageUrl: mediaUrl(r.image_path), unitPriceMinor: unit, quantity: qty, lineTotalMinor: unit * qty,
-      available: max > 0, maxQuantity: max,
-      issue: max === 0 ? "out_of_stock" : item.quantity > max ? "insufficient_stock" : null,
+      available: inStock, lowStock: inStock && (st?.low_stock ?? false),
+      issue: !inStock ? "out_of_stock" : !st?.enough ? "insufficient_stock" : null,
     };
   });
   return {
