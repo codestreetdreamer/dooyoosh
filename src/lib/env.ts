@@ -21,6 +21,8 @@ const clientSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   NEXT_PUBLIC_SITE_URL: z.url(),
+  /** drives the non-dismissable demo banner; banner shows unless this is exactly "live". Must equal PAYMENT_MODE. */
+  NEXT_PUBLIC_PAYMENT_MODE: z.enum(["sandbox", "live"]).default("sandbox"),
 });
 
 const serverSchema = clientSchema
@@ -66,7 +68,13 @@ const serverSchema = clientSchema
         ctx.addIssue({ code: "custom", path: ["PAYMENTS_STORE"], message: "memory store is not allowed in production" });
       }
     }
+    if (env.NEXT_PUBLIC_PAYMENT_MODE !== env.PAYMENT_MODE) {
+      ctx.addIssue({ code: "custom", path: ["NEXT_PUBLIC_PAYMENT_MODE"], message: "must equal PAYMENT_MODE" });
+    }
     if (env.PAYMENT_MODE === "live") {
+      if (env.ALLOW_MOCK_IN_PRODUCTION) {
+        ctx.addIssue({ code: "custom", path: ["ALLOW_MOCK_IN_PRODUCTION"], message: "must be false when PAYMENT_MODE=live" });
+      }
       if (env.PAYMENT_PROVIDER === "mock") {
         ctx.addIssue({ code: "custom", path: ["PAYMENT_PROVIDER"], message: "mock is not allowed in live mode" });
       }
@@ -119,6 +127,7 @@ export function clientEnv(): ClientEnv {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
+    NEXT_PUBLIC_PAYMENT_MODE: process.env.NEXT_PUBLIC_PAYMENT_MODE,
   });
   return cachedClient;
 }
