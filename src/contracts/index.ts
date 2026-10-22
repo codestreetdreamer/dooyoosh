@@ -61,6 +61,7 @@ export const endpoints = {
   search: def({ method: "GET", path: "/search", query: catalog.searchQuery, response: catalog.searchResponse, owner: BD, auth: "public" }),
   validateCart: def({ method: "POST", path: "/cart/validate", body: cart.validateCartRequest, response: cart.validateCartResponse, owner: BD, auth: "public" }),
   shippingOptions: def({ method: "GET", path: "/shipping/options", query: shipping.shippingOptionsQuery, response: shipping.shippingOptionsResponse, owner: BD, auth: "public" }),
+  /** 201 new checkout; 200 replay (same idempotencyKey + same payload hash, same body incl. accessToken); 409 IDEMPOTENCY_CONFLICT if payload differs */
   createCheckout: def({ method: "POST", path: "/checkout", body: checkout.createCheckoutRequest, response: checkout.createCheckoutResponse, owner: PO, auth: "public", successStatus: 201 }),
   checkoutStatus: def({ method: "GET", path: "/checkout/{checkoutId}/status", params: orders.checkoutStatusParams, query: orders.checkoutStatusQuery, response: orders.checkoutStatusResponse, owner: PO, auth: "public" }),
   sandboxPay: def({ method: "POST", path: "/checkout/{checkoutId}/sandbox-pay", params: payments.sandboxPayParams, body: payments.sandboxPayRequest, response: payments.sandboxPayResponse, owner: PO, auth: "public" }),
