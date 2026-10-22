@@ -21,9 +21,10 @@ Folder `src/server/db/migrations/`, journal `meta/_journal.json`. Apply **in thi
 | `0002_stock_order_functions.sql` | hand-written | stock/order SECURITY DEFINER functions (§4 below) |
 | `0003_rls_policies.sql` | hand-written | RLS on every table, grants, policies, `storefront_*` views, `variant_availability`, `product_facets` |
 | `0004_storage_media.sql` | hand-written | Storage bucket `product-images` + policies |
-| `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default (Architect decision); CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` on checkouts + orders. **Local only — NOT on staging yet** (staging only after QA green) |
+| `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default; CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` (checkouts, orders); `checkouts.idempotency_payload_hash` (64-hex, required when `idempotency_key` set); `provider_transactions.seq` (bigint identity) + `provider_time` (bigint ms, nullable, index `(provider, provider_time)`, UNIQUE `(provider, seq)`); `refunds.idempotency_key` uuid → **text** (NOT NULL UNIQUE, 1..200). **Local only** |
+| `0006_convert_no_vat_fallback.sql` | hand-written (incremental) | `convert_checkout_to_order` modes `record`/`abort` (abort returns `aborted`, writes nothing), no 1200 VAT fallback; `reserve_checkout(…, p_payload_hash)`; `checkout_id_for_idempotency_key()`. **Local only** |
 
-Staging `bmigqxmswskihqrkeezh` currently has 0000–0004 (applied 2026-10-22).
+Staging `bmigqxmswskihqrkeezh` currently has 0000–0004 (applied 2026-10-22). 0005/0006 go to staging only after QA gives green.
 
 Workflow:
 1. Edit `src/server/db/schema/*.ts` → `pnpm db:generate` (new numbered file). Hand-written SQL: `pnpm drizzle-kit generate --custom --name <name>`.
@@ -49,26 +50,29 @@ Errors are `RAISE EXCEPTION '<CODE>' USING ERRCODE = 'P0001', DETAIL = <json>`; 
 |---|---|---|
 | `OUT_OF_STOCK` | json array of variant ids (ALL failing lines: unknown, inactive, unpublished, short) | 409, `details.variantIds` |
 | `PRICE_CHANGED` | json array of variant ids (snapshot `unitPriceMinor` ≠ current price) | 409, `details.variantIds` |
-| `STOCK_CONFLICT` | json array of variant ids (only with `p_conflict_mode='abort'`) | provider-specific refusal |
+| `IDEMPOTENCY_CONFLICT` | `{"checkout_id"}` — same idempotencyKey, different payload hash | 409 (wrapper throws `IdempotencyConflictError`; no ERROR_CODES entry yet) |
 | `VALIDATION_ERROR` | `{"field": ...}` | 400 |
 | `NOT_FOUND` | `{"checkout_id"|"variant_id"|"order_id": ...}` | 404 |
 | `INVALID_STATE` | `{"checkout_status"|"reason": ...}` | 409/400 |
 | `AMOUNT_MISMATCH` | `{"expected_minor","expected_currency","got_minor","got_currency"}` | reject callback (Payme -31001) |
 | `INSUFFICIENT_STOCK` | `{"variant_id"}` (adjust would go below reserved) | 400 |
 
-### `reserve_checkout(p_checkout_id uuid, p_items jsonb, p_expires_at timestamptz) returns void`
+### `reserve_checkout(p_checkout_id uuid, p_items jsonb, p_expires_at timestamptz, p_payload_hash text default null) returns void`
 - Precondition: the app has inserted the `checkouts` row (status `open`/`awaiting_payment`) with `items` = `CheckoutSnapshotLine[]` (camelCase: `variantId, sku, productName, size, colour, unitPriceMinor, quantity, lineTotalMinor, ikpuCode, packageCode, vatRateBp`), `subtotal_cents = Σ unitPriceMinor·quantity`, `total_cents = subtotal + shipping + tax − discount` (CHECK), `access_token_hash` (B1, lower-case hex `HMAC_SHA256(ORDER_TOKEN_SECRET, token)`, computed by Payments), `provider`, `expires_at` = provider session expiry (now + 30 min).
 - `p_items = [{"variant_id": uuid, "quantity": 1..10}]`, no duplicates, must equal the snapshot lines (else `VALIDATION_ERROR`).
 - Locks variants `ORDER BY id`, re-checks: variant active, product published/not archived/`published_at <= now()`, product currency = checkout currency, snapshot price = DB price (`PRICE_CHANGED`), stock (`OUT_OF_STOCK`). Then `stock_reserved += q` (spec §4 conditional UPDATE) and inserts `stock_reservations` (expires_at = `p_expires_at`, use now + 35 min), sets `checkouts.reserved_until = p_expires_at`.
 - **Idempotent**: calling again for the same checkout with the same lines while reservations are active is a no-op.
-- **`idempotencyKey`** (contract `createCheckoutRequest.idempotencyKey`): `checkouts.idempotency_key uuid UNIQUE NULL`. Race-safe pattern in ONE transaction: `INSERT INTO checkouts (...) ON CONFLICT (idempotency_key) DO NOTHING;` → `SELECT id, reserved_until, expires_at FROM checkouts WHERE idempotency_key = $key` → `reserve_checkout(id, ...)` (no-op on repeat) → return the existing checkout. Tested with 10 parallel submits (1 checkout, 1 reservation).
+- **`idempotencyKey`** (contract `createCheckoutRequest.idempotencyKey`): `checkouts.idempotency_key uuid UNIQUE NULL` + `idempotency_payload_hash` (lower-case hex sha256 of the canonical request payload, computed by Payments; required when the key is set). Race-safe pattern in ONE transaction: `INSERT INTO checkouts (..., idempotency_key, idempotency_payload_hash) ... ON CONFLICT (idempotency_key) DO NOTHING;` → `checkout_id_for_idempotency_key(key, hash)` (returns the id; raises `IDEMPOTENCY_CONFLICT` if the stored hash differs → API 409) → `reserve_checkout(id, items, expires, hash)` (no-op on repeat; also checks the hash) → return the existing checkout. Tested with 10 parallel submits (1 checkout, 1 reservation) + a different-payload submit (IDEMPOTENCY_CONFLICT). TS: `inventory.checkoutIdForIdempotencyKey()`, `inventory.reserveWith(…, { payloadHash })`.
+- Guest token: the createCheckout response carries `guestToken`/`accessToken` once; the DB never stores it, only `access_token_hash` (HMAC hex, see below).
 
-### `convert_checkout_to_order(p_checkout_id uuid, p_order jsonb, p_conflict_mode text default 'mark') returns jsonb`
+### `convert_checkout_to_order(p_checkout_id uuid, p_order jsonb, p_conflict_mode text default 'record') returns jsonb`
+`p_conflict_mode` ∈ `record` | `abort` (contract `conflictMode`; anything else → `VALIDATION_ERROR`).
 - `p_order = {"reference"?: "DY-YYYYMMDD-XXXXX" (generated if absent), "provider", "provider_payment_id", "amount_minor", "currency", "paid_at"?, "raw"?}`.
-- Returns `{"order_id","reference","status":"paid"|"stock_conflict"|"already_converted","order_status","conflict_variant_ids":[...]}`.
+- Returns `{"order_id","reference","status":"paid"|"stock_conflict"|"already_converted"|"aborted","order_status","conflict_variant_ids":[...]}` (`aborted`: order_id/reference null).
 - Locks checkout → its reservations → variants (id order) before writing (no deadlocks under parallel webhooks). Verifies provider and **amount + currency = checkout total** (`AMOUNT_MISMATCH`, nothing written).
 - All reservations of THIS checkout `active` → order `paid`: `stock_on_hand -= q`, `stock_reserved -= q`, `inventory_movements(reason 'sale', order_id)`, reservations `converted`, `payments` row `succeeded`, `order_events(payment_received)`, checkout `completed`, `orders.access_token_hash` copied from the checkout.
-- Any reservation not active (released/expired by cron) → `mark`: order `stock_conflict`, **no stock change**, `payments` succeeded (refund it), `order_events(stock_conflict)`; `abort`: raises `STOCK_CONFLICT`, everything rolls back.
+- Any reservation not active (released/expired by cron) → `record`: order `stock_conflict`, **no stock change**, `payments` succeeded (refund it), `order_events(stock_conflict)`; `abort`: **writes nothing** and returns `status:'aborted'` + `conflict_variant_ids` (no exception; the caller's transaction stays usable; Payme/Click Perform after expiry → provider error).
+- `order_items.vat_rate_bp` = snapshot `vatRateBp`, else `products.vat_rate_bp` (NOT NULL, no default) — no hardcoded 12 % anywhere.
 - Second call → `already_converted`, nothing changes. A `provider_payment_id` already used for another order → `INVALID_STATE`.
 
 ### `release_checkout(p_checkout_id uuid, p_reason text) returns int`
