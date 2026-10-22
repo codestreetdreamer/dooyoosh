@@ -1,6 +1,6 @@
 /**
  * Sandbox payment simulator (POST /api/v1/checkout/{id}/sandbox-pay?token=&outcome=success|fail).
- * Refused unless PAYMENT_MODE=sandbox and NODE_ENV != production. It builds the SAME signed callback the provider
+ * 404 unless PAYMENT_MODE=sandbox + SANDBOX_SIMULATOR_ENABLED=true and provider mock|click (sandbox-gate.ts). It builds the SAME signed callback the provider
  * would send and pushes it through the normal webhook pipeline, so nothing bypasses signature/amount checks.
  * Payme is not simulated here: use the official sandbox at https://test.paycom.uz (developer.help.paycom.uz/pesochnitsa).
  */
@@ -13,7 +13,8 @@ import { handleWebhook } from "./webhooks";
 import { tokenMatches } from "../checkout/token";
 
 export async function simulateSandboxPayment(deps: PaymentDeps, provider: PaymentProvider, checkoutId: string, token: string, outcome: "success" | "fail") {
-  if (provider.mode !== "sandbox" || deps.config.nodeEnv === "production") throw ApiError.forbidden("sandbox simulator disabled");
+  // defence in depth; the route already returned 404 via sandboxSimulatorEnabled(process.env)
+  if (provider.mode !== "sandbox" || (provider.name !== "mock" && provider.name !== "click")) throw ApiError.notFound();
   const c = await deps.repo.getCheckout(checkoutId);
   if (!c || !tokenMatches(token, c.accessTokenHash)) throw ApiError.notFound();
   const meta = { method: "POST", ip: null };

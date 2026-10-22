@@ -6,12 +6,15 @@
 import { webhookParams } from "@/contracts/payments";
 import { errorResponse, ApiError } from "@/lib/errors";
 import { clientIp, getPayments } from "@/server/payments/container";
+import { mockProviderAllowed } from "@/server/payments/sandbox-gate";
 import { handleWebhook } from "@/server/payments/webhooks";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request, ctx: { params: Promise<{ provider: string }> }) {
   try {
+    // QA P0: the mock webhook does not exist outside sandbox; decided from env alone, before body/config/DB.
+    if (!mockProviderAllowed(process.env) && (await ctx.params).provider === "mock") throw ApiError.notFound();
     const { provider: name } = webhookParams.parse(await ctx.params);
     const { deps, providers } = getPayments();
     const provider = providers.get(name);
