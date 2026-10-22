@@ -27,6 +27,7 @@ Schema names are `<module>.<export>` under `src/contracts/`. Route handler file 
 | `shippingOptions` | GET | `/api/v1/shipping/options` | query: `shipping.shippingOptionsQuery` | `shipping.shippingOptionsResponse` (200) | public | Backend & Database | todo |
 | `createCheckout` | POST | `/api/v1/checkout` | body: `checkout.createCheckoutRequest` | `checkout.createCheckoutResponse` (201) | public | Payments & Orders | todo |
 | `checkoutStatus` | GET | `/api/v1/checkout/{checkoutId}/status` | params: `orders.checkoutStatusParams`<br>query: `orders.checkoutStatusQuery` | `orders.checkoutStatusResponse` (200) | public | Payments & Orders | todo |
+| `sandboxPay` | POST | `/api/v1/checkout/{checkoutId}/sandbox-pay` | query: `payments.sandboxPayQuery` (token, outcome) | `payments.sandboxPayResponse` (200); 404 when PAYMENT_MODE=live | public (guest token) | Payments & Orders | in progress |
 | `getOrder` | GET | `/api/v1/orders/{reference}` | params: `orders.orderParams`<br>query: `orders.getOrderQuery` | `orders.getOrderResponse` (200) | public | Payments & Orders | todo |
 | `listArticles` | GET | `/api/v1/articles` | query: `journal.listArticlesQuery` | `journal.listArticlesResponse` (200) | public | Backend & Database | todo |
 | `getArticle` | GET | `/api/v1/articles/{slug}` | params: `journal.articleParams`<br>query: `journal.getArticleQuery` | `journal.getArticleResponse` (200) | public | Backend & Database | todo |
