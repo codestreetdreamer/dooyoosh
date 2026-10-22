@@ -6,7 +6,7 @@
  * reserve_checkout / convert_checkout_to_order / release_checkout / release_expired_reservations / adjust_stock (spec §12.5).
  *
  * `memory-store.ts` implements this port AND a fake InventoryService with the same semantics, for unit tests and
- * local demo until the Postgres implementation lands (TODO: pg-store.ts once docs/DATABASE.md is published).
+ * local demo; pg-store.ts is the Postgres implementation (PAYMENTS_STORE=postgres).
  */
 import type { OrderStatus } from "@/contracts/orders";
 import type { CheckoutStatus, CheckoutSnapshotLine } from "@/contracts/checkout";

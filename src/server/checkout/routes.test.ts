@@ -117,4 +117,21 @@ describe("checkout/status/orders routes (memory store, sandbox)", () => {
     expect(badReq.res.status).toBe(400);
     expect(badReq.json.error!.code).toBe("VALIDATION_ERROR");
   });
+
+  it("public checkout errors never reveal stock counts; quantity capped by contract MAX_LINE_QTY", async () => {
+    const { MAX_LINE_QTY } = await import("@/contracts/cart");
+    const r = await routes();
+    // tote: demo stock 1 -> asking for 2 is OUT_OF_STOCK
+    const tote = "00000000-0000-4000-8000-000000000082";
+    const oos = await r.create({ items: [{ variantId: tote, quantity: 2 }] });
+    expect(oos.res.status).toBe(409);
+    expect(oos.json.error!.code).toBe("OUT_OF_STOCK");
+    expect(Object.keys((oos.json.error as unknown as { details: object }).details)).toEqual(["variantIds"]);
+    const details = (oos.json.error as unknown as { details: { variantIds: unknown[] } }).details;
+    expect(details.variantIds).toEqual([tote]);
+    // no count anywhere in the body (message included): no bare numbers, no stock vocabulary
+    expect(JSON.stringify(oos.json)).not.toMatch(/stock_?on|onHand|reserved|remaining|left|:\s*-?[0-9]+[,}]/i);
+    const tooMany = await r.create({ items: [{ variantId: SHIRT, quantity: MAX_LINE_QTY + 1 }] });
+    expect(tooMany.res.status).toBe(400);
+  });
 });
