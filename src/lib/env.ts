@@ -17,13 +17,9 @@ const optionalSecret = z
   .optional()
   .transform((v) => (v === undefined || v === "" ? undefined : v));
 
-const clientSchema = z.object({
-  NEXT_PUBLIC_SUPABASE_URL: z.url(),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
-  NEXT_PUBLIC_SITE_URL: z.url(),
-  /** drives the non-dismissable demo banner; banner shows unless this is exactly "live". Must equal PAYMENT_MODE. */
-  NEXT_PUBLIC_PAYMENT_MODE: z.enum(["sandbox", "live"]).default("sandbox"),
-});
+import { clientSchema, parseClientEnv, clientEnv, type ClientEnv } from "./client-env";
+export { parseClientEnv, clientEnv, type ClientEnv };
+
 
 const serverSchema = clientSchema
   .extend({
@@ -107,7 +103,6 @@ const serverSchema = clientSchema
     }
   });
 
-export type ClientEnv = z.infer<typeof clientSchema>;
 export type ServerEnv = z.infer<typeof serverSchema>;
 
 function format(error: z.ZodError): string {
@@ -119,26 +114,6 @@ export function parseServerEnv(source: Record<string, string | undefined>): Serv
   const r = serverSchema.safeParse(source);
   if (!r.success) throw new Error(`Invalid server environment:\n${format(r.error)}`);
   return r.data;
-}
-
-export function parseClientEnv(source: Record<string, string | undefined>): ClientEnv {
-  const r = clientSchema.safeParse(source);
-  if (!r.success) throw new Error(`Invalid client environment:\n${format(r.error)}`);
-  return r.data;
-}
-
-// NEXT_PUBLIC_* must be referenced literally so Next.js inlines them in the client bundle.
-let cachedClient: ClientEnv | undefined;
-
-/** Safe in the browser. Lazily validated so imports never throw at build time. */
-export function clientEnv(): ClientEnv {
-  cachedClient ??= parseClientEnv({
-    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
-    NEXT_PUBLIC_PAYMENT_MODE: process.env.NEXT_PUBLIC_PAYMENT_MODE,
-  });
-  return cachedClient;
 }
 
 /** Read-only catalog/journal routes: only DB + public vars. Does not require payment/email secrets. */

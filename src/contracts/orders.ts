@@ -1,6 +1,6 @@
 /**
- * GET /api/v1/orders/{reference}?token= (guest order status, spec §5). Owner: Payments & Orders.
- * The token comes from the confirmation email / success redirect; DB stores only access_token_hash.
+ * GET /api/v1/orders/{reference} with `Authorization: Bearer <accessToken>` (guest order status). Owner: Payments & Orders.
+ * The token comes from the checkout response (sessionStorage) or the email link fragment `#token=`; DB stores only access_token_hash.
  * Unknown reference OR wrong token -> 404 NOT_FOUND (do not reveal which).
  */
 import { z } from "zod";
@@ -91,8 +91,8 @@ export type GetOrderResponse = z.infer<typeof getOrderResponse>;
 export const checkoutStatusParams = z.object({ checkoutId: uuid });
 /**
  * The guest access token is minted at checkout creation (hash stored in checkouts.access_token_hash,
- * copied to orders.access_token_hash by convert_checkout_to_order) and placed in the provider's
- * success return URL. Wrong token -> 404.
+ * copied to orders.access_token_hash by convert_checkout_to_order) and returned once in POST /checkout
+ * (re-derivable on idempotent replay). It is NEVER placed in any URL. Wrong token -> 404.
  */
 /** token in header `Authorization: Bearer <accessToken>`; `?token=` -> 400 */
 export const checkoutStatusQuery = z.object({});
