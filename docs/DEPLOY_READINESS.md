@@ -20,8 +20,11 @@ Rule: nothing is "done" until its row here is ✅. Each agent updates only its o
 |---|---|---|
 | Root config: package.json (pnpm, Next 15, React 19, TS strict), tsconfig `@/*`, next.config.ts, eslint/prettier/postcss, .gitignore, `pnpm install` ok, `pnpm typecheck` passes | ✅ 2026-10-22 | Architect |
 | Next.js app scaffold (`src/app/[locale]/layout.tsx`, pages, `src/lib/i18n.ts`, tokens) — `pnpm build` cannot pass until this exists | ❌ | Frontend & Design |
-| Drizzle schema + 0000_init.sql | ✅ reported | Backend & Database |
-| RLS migration, append-only inventory_movements | ❌ | Backend & Database |
+| Drizzle schema + 0000_init.sql (31 tables, B1–B16, B18–B22) | ✅ 2026-10-22, applied to staging bmigqxmswskihqrkeezh | Backend & Database |
+| Migrations 0001_security_core, 0002_stock_order_functions, 0003_rls_policies, 0004_storage_media (RLS on all tables, append-only inventory_movements, SECURITY DEFINER stock/order fns, bucket product-images) | ✅ 2026-10-22, applied to staging; advisors: security only INFO rls_enabled_no_policy (intentional, server-only tables), performance only INFO unused_index (empty DB) | Backend & Database |
+| Seeds: reference (UZ/UZS, PLACEHOLDER shipping) + DEMO catalogue (12 products, 4 articles; removable via seed/cleanup_demo.sql) | ✅ applied to staging; DEMO data must be removed before launch ❌; demo product images not uploaded ❌ | Backend & Database |
+| DB tests (src/server/db/tests: RLS, functions, concurrency) | ✅ local all pass; RLS + functions also pass on staging (rolled back) | Backend & Database |
+| docs/DATABASE.md, src/server/db/supabase.types.ts | ✅ 2026-10-22 | Backend & Database |
 | `.env.example` + Zod env validation (`src/lib/env.ts`, refuses `mock` in production/live) | ✅ 2026-10-22 | Architect (per OWNERSHIP.md) |
 | API contracts `src/contracts/*` (37 endpoints) + `src/lib/{errors,money,api-client}.ts` + docs/CONTRACTS.md | ✅ 2026-10-22 | Architect |
 | Schema review → docs/SCHEMA_DELTA.md (items for Backend & Database) | ✅ 2026-10-22 | Architect |
