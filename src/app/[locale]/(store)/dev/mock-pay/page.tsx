@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { setRequestLocale } from "next-intl/server";
 
-export const metadata: Metadata = { title: "Mock payment (dev only)", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Mock payment (dev only)", robots: { index: false, follow: false }, referrer: "no-referrer" };
 export const dynamic = "force-dynamic";
 
 /** DEV ONLY — simulated hosted payment page for the fixture layer. 404 unless fixtures are enabled. */

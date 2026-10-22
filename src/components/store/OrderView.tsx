@@ -3,16 +3,19 @@ import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { PublicOrder } from "@/contracts/orders";
 import { call } from "@/lib/store/data-source";
+import { useUrlToken } from "@/lib/store/url-token";
 import { ErrorState, Spinner } from "@/components/ui/States";
 import { Price } from "./Price";
 
 /** Order status from GET /orders/{reference}?token= (server truth only). */
-export function OrderView({ reference, token }: { reference: string; token: string | null }) {
+export function OrderView({ reference }: { reference: string }) {
   const t = useTranslations("order");
+  const token = useUrlToken(`order:${reference}`);
   const locale = useLocale();
   const [s, setS] = useState<{ kind: "loading" | "ok" | "notfound" | "error"; order?: PublicOrder }>({ kind: "loading" });
 
   useEffect(() => {
+    if (token === undefined) return;
     if (!token) {
       setS({ kind: "notfound" });
       return;
@@ -62,7 +65,7 @@ export function OrderView({ reference, token }: { reference: string; token: stri
         {a.fullName}<br />{a.line1}{a.line2 ? <>, {a.line2}</> : null}<br />{[a.city, a.region, a.postalCode].filter(Boolean).join(", ")}<br />{a.country}
       </address>
       {o.shipments.filter((sh) => sh.trackingUrl).map((sh) => (
-        <a key={sh.id} href={sh.trackingUrl!} target="_blank" rel="noopener noreferrer" className="btn btn-outline mt-6">{t("tracking")} — {sh.carrier}</a>
+        <a key={sh.id} href={sh.trackingUrl!} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" className="btn btn-outline mt-6">{t("tracking")} — {sh.carrier}</a>
       ))}
     </div>
   );

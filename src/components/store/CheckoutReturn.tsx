@@ -6,6 +6,7 @@ import { Link } from "@/i18n/navigation";
 import { useBag } from "@/lib/store/bag";
 import { call } from "@/lib/store/data-source";
 import { clearReservation } from "@/lib/store/reservation";
+import { storeToken, useUrlToken } from "@/lib/store/url-token";
 import { ErrorState, Spinner } from "@/components/ui/States";
 
 type S = CheckoutStatusResponse["data"];
@@ -16,14 +17,16 @@ const MAX_POLLS = 48; // ~2 minutes, then keep the "pending" message
  * Provider return page. URL params only IDENTIFY the checkout; payment state is always read from the server
  * (GET /checkout/{id}/status?token=), which only the verified provider callback can move to completed (spec §4.6).
  */
-export function CheckoutReturn({ checkoutId, token }: { checkoutId: string | null; token: string | null }) {
+export function CheckoutReturn({ checkoutId }: { checkoutId: string | null }) {
   const t = useTranslations("order");
+  const token = useUrlToken(checkoutId ? `checkout:${checkoutId}` : null);
   const { clear } = useBag();
   const [state, setState] = useState<{ kind: "loading" | "ok" | "notfound" | "error"; data?: S }>({ kind: "loading" });
   const polls = useRef(0);
   const cleared = useRef(false);
 
   useEffect(() => {
+    if (token === undefined) return; // still reading the token
     if (!checkoutId || !token) {
       setState({ kind: "notfound" });
       return;
@@ -38,6 +41,8 @@ export function CheckoutReturn({ checkoutId, token }: { checkoutId: string | nul
         return;
       }
       const d = res.data.data;
+      // Same guest token grants access to the order; keep it out of URLs (sessionStorage only).
+      if (d.orderReference) storeToken(`order:${d.orderReference}`, token);
       setState({ kind: "ok", data: d });
       const settled = d.checkoutStatus === "completed" || d.checkoutStatus === "failed" || d.checkoutStatus === "expired";
       if (d.checkoutStatus === "completed" && d.orderStatus === "paid" && !cleared.current) {
@@ -59,7 +64,7 @@ export function CheckoutReturn({ checkoutId, token }: { checkoutId: string | nul
   if (state.kind === "error") return <ErrorState title={t("pendingTitle")}>{t("pendingBody")}</ErrorState>;
 
   const d = state.data!;
-  const orderHref = d.orderReference && token ? `/order/${d.orderReference}?token=${encodeURIComponent(token)}` : null;
+  const orderHref = d.orderReference ? `/order/${d.orderReference}` : null;
   let title = t("pendingTitle");
   let body: string | null = t("pendingBody");
   if (d.checkoutStatus === "completed" && d.orderStatus === "stock_conflict") { title = t("conflictTitle"); body = t("conflictBody"); }
