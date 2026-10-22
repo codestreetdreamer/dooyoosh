@@ -174,7 +174,8 @@ export class MemoryStore implements CommerceRepo, InventoryService {
     for (const r of rows) { this.s.variants.get(r.variantId)!.stockReserved -= r.quantity; r.status = "released"; }
     return rows.length;
   }
-  async release(checkoutId: string, _reason: ReleaseReason) {
+  async release(checkoutId: string, reason: ReleaseReason) {
+    void reason; // the fake does not persist the reason
     return this.releaseRows(this.s.reservations.filter((r) => r.checkoutId === checkoutId && r.status === "active"));
   }
   async releaseExpired(now: Date = this.clock()) {

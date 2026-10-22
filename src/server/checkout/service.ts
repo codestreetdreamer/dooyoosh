@@ -34,7 +34,7 @@ async function openSession(deps: PaymentDeps, provider: PaymentProvider, c: NewC
     checkoutId: c.id,
     email: c.email,
     locale: c.locale as CreateCheckoutRequest["locale"],
-    lines: c.items.map(({ ikpuCode: _i, packageCode: _p, vatRateBp: _v, ...line }) => line),
+    lines: c.items.map((l) => ({ variantId: l.variantId, sku: l.sku, productName: l.productName, size: l.size, colour: l.colour, unitPriceMinor: l.unitPriceMinor, quantity: l.quantity, lineTotalMinor: l.lineTotalMinor })),
     totals: { currency: c.currency, subtotalMinor: c.subtotalMinor, shippingMinor: c.shippingMinor, taxMinor: c.taxMinor, discountMinor: c.discountMinor, totalMinor: c.totalMinor },
     successUrl,
     cancelUrl,
