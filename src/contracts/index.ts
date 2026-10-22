@@ -55,6 +55,7 @@ const PO = "Payments & Orders" as const;
 export const endpoints = {
   // ---------- Public ----------
   listProducts: def({ method: "GET", path: "/products", query: catalog.listProductsQuery, response: catalog.listProductsResponse, owner: BD, auth: "public" }),
+  productFacets: def({ method: "GET", path: "/products/facets", query: catalog.productFacetsQuery, response: catalog.productFacetsResponse, owner: BD, auth: "public" }),
   getProduct: def({ method: "GET", path: "/products/{slug}", params: catalog.productParams, query: catalog.getProductQuery, response: catalog.getProductResponse, owner: BD, auth: "public" }),
   listCategories: def({ method: "GET", path: "/categories", query: catalog.listCategoriesQuery, response: catalog.listCategoriesResponse, owner: BD, auth: "public" }),
   search: def({ method: "GET", path: "/search", query: catalog.searchQuery, response: catalog.searchResponse, owner: BD, auth: "public" }),

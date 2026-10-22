@@ -74,6 +74,18 @@ export const listProductsQuery = paginationQuery.extend({
 });
 export type ListProductsQuery = z.infer<typeof listProductsQuery>;
 export const listProductsResponse = paginated(productCard);
+
+// GET /products/facets — available filter values for published products with stock>0 (counts are product counts)
+export const productFacetsQuery = z.object({ locale: locale.default("en"), category: slug.optional() });
+export const facetValue = z.object({ value: z.string(), label: z.string(), count: z.number().int().nonnegative() });
+export const productFacetsResponse = z.object({
+  data: z.object({
+    sizes: z.array(facetValue.extend({ sizeSystem })),
+    colours: z.array(facetValue.extend({ hex: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable() })),
+    priceMinor: z.object({ min: z.number().int().nonnegative(), max: z.number().int().nonnegative(), currency: z.string().length(3) }).nullable(),
+  }),
+});
+export type ProductFacetsResponse = z.infer<typeof productFacetsResponse>;
 export type ListProductsResponse = z.infer<typeof listProductsResponse>;
 
 // GET /products/{slug}

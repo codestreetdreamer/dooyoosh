@@ -19,6 +19,7 @@ Schema names are `<module>.<export>` under `src/contracts/`. Route handler file 
 | Name | Method | Path | Request | Response (status) | Auth (roles) | Owner | Status |
 |---|---|---|---|---|---|---|---|
 | `listProducts` | GET | `/api/v1/products` | query: `catalog.listProductsQuery` | `catalog.listProductsResponse` (200) | public | Backend & Database | todo |
+| `productFacets` | GET | `/api/v1/products/facets` | query: `catalog.productFacetsQuery` | `catalog.productFacetsResponse` (200) | public | Backend & Database | todo |
 | `getProduct` | GET | `/api/v1/products/{slug}` | params: `catalog.productParams`<br>query: `catalog.getProductQuery` | `catalog.getProductResponse` (200) | public | Backend & Database | todo |
 | `listCategories` | GET | `/api/v1/categories` | query: `catalog.listCategoriesQuery` | `catalog.listCategoriesResponse` (200) | public | Backend & Database | todo |
 | `search` | GET | `/api/v1/search` | query: `catalog.searchQuery` | `catalog.searchResponse` (200) | public | Backend & Database | todo |
