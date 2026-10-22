@@ -1,4 +1,4 @@
-import { clientEnv } from "@/lib/env";
+import { clientEnv } from "@/lib/client-env";
 
 /**
  * Demo mode = payment mode is anything other than "live" (per Architect: clientEnv().NEXT_PUBLIC_PAYMENT_MODE !== "live").
