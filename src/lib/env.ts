@@ -51,6 +51,7 @@ const serverSchema = clientSchema
     SANDBOX_SIMULATOR_ENABLED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
     PAYMENTS_DEMO_SEED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
     ADMIN_DEV_TOKEN: optionalSecret,
+    TRUSTED_IP_HEADER: z.string().min(1).default("x-vercel-forwarded-for"),
   })
   .superRefine((env, ctx) => {
     const need = (keys: (keyof typeof env)[], why: string) => {
