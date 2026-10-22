@@ -1,0 +1,5 @@
+node_modules
+.next
+pnpm-lock.yaml
+src/server/db/migrations
+tests/db/node_modules

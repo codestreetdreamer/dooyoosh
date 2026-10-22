@@ -1,0 +1,73 @@
+# DOOYOOSH CODEOWNERS (mirrors docs/OWNERSHIP.md v1). Agents have no GitHub users; every line resolves to
+# @codestreetdreamer and the comment names the owning agent. Last matching pattern wins.
+
+# Default: Architect
+*                                         @codestreetdreamer  # Architect
+
+# Architect: docs, contracts, root config, shared lib
+/docs/                                    @codestreetdreamer  # Architect
+/src/contracts/                           @codestreetdreamer  # Architect (integration boundary; changes need Architect approval)
+/package.json                             @codestreetdreamer  # Architect
+/pnpm-lock.yaml                           @codestreetdreamer  # Architect
+/tsconfig.json                            @codestreetdreamer  # Architect
+/next.config.ts                           @codestreetdreamer  # Architect
+/eslint.config.mjs                        @codestreetdreamer  # Architect
+/postcss.config.mjs                       @codestreetdreamer  # Architect
+/.env.example                             @codestreetdreamer  # Architect
+/CODEOWNERS                               @codestreetdreamer  # Architect
+/src/lib/env.ts                           @codestreetdreamer  # Architect
+/src/lib/errors.ts                        @codestreetdreamer  # Architect
+/src/lib/money.ts                         @codestreetdreamer  # Architect
+/src/lib/api-client.ts                    @codestreetdreamer  # Architect
+
+# Backend & Database
+/drizzle.config.ts                        @codestreetdreamer  # Backend & Database
+/src/server/db/                           @codestreetdreamer  # Backend & Database (schema, migrations, RLS SQL, seed)
+/src/server/catalog/                      @codestreetdreamer  # Backend & Database
+/src/server/inventory/                    @codestreetdreamer  # Backend & Database
+/src/server/journal/                      @codestreetdreamer  # Backend & Database
+/src/server/auth/                         @codestreetdreamer  # Backend & Database
+/src/server/media/                        @codestreetdreamer  # Backend & Database
+/src/app/api/v1/products/                 @codestreetdreamer  # Backend & Database
+/src/app/api/v1/categories/               @codestreetdreamer  # Backend & Database
+/src/app/api/v1/search/                   @codestreetdreamer  # Backend & Database
+/src/app/api/v1/articles/                 @codestreetdreamer  # Backend & Database
+/src/app/api/v1/newsletter/               @codestreetdreamer  # Backend & Database
+/src/app/api/v1/cart/                     @codestreetdreamer  # Backend & Database
+/src/app/api/v1/shipping/                 @codestreetdreamer  # Backend & Database
+/src/app/api/v1/admin/products/           @codestreetdreamer  # Backend & Database
+/src/app/api/v1/admin/variants/           @codestreetdreamer  # Backend & Database
+/src/app/api/v1/admin/articles/           @codestreetdreamer  # Backend & Database
+/src/app/api/v1/admin/media/              @codestreetdreamer  # Backend & Database
+
+# Payments & Orders (+ QA & Security review required, OWNERSHIP rule 5)
+/src/server/checkout/                     @codestreetdreamer  # Payments & Orders; review: QA & Security
+/src/server/orders/                       @codestreetdreamer  # Payments & Orders; review: QA & Security
+/src/server/payments/                     @codestreetdreamer  # Payments & Orders; review: QA & Security
+/src/server/shipping/                     @codestreetdreamer  # Payments & Orders
+/src/server/email/                        @codestreetdreamer  # Payments & Orders
+/src/emails/                              @codestreetdreamer  # Payments & Orders
+/src/app/api/v1/checkout/                 @codestreetdreamer  # Payments & Orders; review: QA & Security
+/src/app/api/v1/orders/                   @codestreetdreamer  # Payments & Orders
+/src/app/api/v1/webhooks/                 @codestreetdreamer  # Payments & Orders; review: QA & Security
+/src/app/api/v1/cron/                     @codestreetdreamer  # Payments & Orders
+/src/app/api/v1/admin/orders/             @codestreetdreamer  # Payments & Orders
+/src/app/api/v1/admin/shipments/          @codestreetdreamer  # Payments & Orders
+/src/app/api/v1/admin/variants/*/adjust/  @codestreetdreamer  # Payments & Orders (exception inside admin/variants)
+
+# Frontend & Design
+/src/app/[[]locale]/                      @codestreetdreamer  # Frontend & Design
+/src/app/admin/                           @codestreetdreamer  # Frontend & Design (UI pages only)
+/src/components/                          @codestreetdreamer  # Frontend & Design
+/src/styles/                              @codestreetdreamer  # Frontend & Design
+/src/messages/                            @codestreetdreamer  # Frontend & Design
+/src/lib/i18n.ts                          @codestreetdreamer  # Frontend & Design
+/public/                                  @codestreetdreamer  # Frontend & Design
+/design/                                  @codestreetdreamer  # Frontend & Design
+
+# QA & Security
+/tests/                                   @codestreetdreamer  # QA & Security
+/playwright.config.ts                     @codestreetdreamer  # QA & Security
+/vitest.config.ts                         @codestreetdreamer  # QA & Security
+/.github/workflows/                       @codestreetdreamer  # QA & Security
+/docs/THREAT_MODEL.md                     @codestreetdreamer  # QA & Security
