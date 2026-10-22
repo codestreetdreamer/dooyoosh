@@ -8,11 +8,12 @@ type Labels = Record<"filters" | "size" | "anySize" | "colour" | "anyColour" | "
  * Filter + sort form. Plain GET form (works without JS); with JS, sort/select changes apply instantly.
  * Price inputs are in major units of the catalog currency; the server converts them to minor units.
  */
-export function ShopFilters({ action, values, sizes, colours, labels, currency }: {
+export function ShopFilters({ action, values, sizes, colours, labels, currency, priceRange }: {
   action: string;
   values: { sort: string; size: string; colour: string; min: string; max: string };
-  sizes: string[];
-  colours: string[];
+  sizes: { value: string; label: string }[];
+  colours: { value: string; label: string }[];
+  priceRange: { min: string; max: string } | null;
   labels: Labels;
   currency: string;
 }) {
@@ -44,14 +45,16 @@ export function ShopFilters({ action, values, sizes, colours, labels, currency }
         {labels.size}
         <select name="size" defaultValue={values.size} onChange={submit} className="field mt-1.5 text-sm normal-case tracking-normal">
           <option value="">{labels.anySize}</option>
-          {sizes.map((s) => <option key={s} value={s}>{s}</option>)}
+          {values.size && !sizes.some((o) => o.value === values.size) ? <option value={values.size}>{values.size}</option> : null}
+          {sizes.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </label>
       <label className="text-xs uppercase tracking-[0.14em] text-muted">
         {labels.colour}
         <select name="colour" defaultValue={values.colour} onChange={submit} className="field mt-1.5 text-sm normal-case tracking-normal">
           <option value="">{labels.anyColour}</option>
-          {colours.map((c) => <option key={c} value={c}>{c}</option>)}
+          {values.colour && !colours.some((o) => o.value === values.colour) ? <option value={values.colour}>{values.colour}</option> : null}
+          {colours.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </label>
       <label className="text-xs uppercase tracking-[0.14em] text-muted">
@@ -74,7 +77,10 @@ export function ShopFilters({ action, values, sizes, colours, labels, currency }
         <button type="submit" className="btn btn-primary !px-5">{labels.apply}</button>
         <a href={action} className="link-underline text-xs uppercase tracking-[0.14em]">{labels.reset}</a>
       </div>
-      <p className="col-span-2 text-xs text-muted md:col-span-6" aria-live="polite">{labels.results}</p>
+      <p className="col-span-2 text-xs text-muted md:col-span-6" aria-live="polite">
+        {labels.results}
+        {priceRange ? <span className="ml-3">· {priceRange.min} – {priceRange.max}</span> : null}
+      </p>
     </form>
   );
 }

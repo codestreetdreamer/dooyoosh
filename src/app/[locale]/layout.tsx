@@ -9,6 +9,7 @@ import { BagProvider } from "@/lib/store/bag";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { DevFixturesBanner } from "@/components/layout/DevFixturesBanner";
+import "@/lib/store/fixtures-guard"; // throws at build time if fixtures are requested in production
 import "@/styles/globals.css";
 
 const serif = Cormorant_Garamond({ subsets: ["latin", "latin-ext", "cyrillic"], weight: ["400", "500", "600"], style: ["normal", "italic"], variable: "--font-serif-family", display: "swap" });

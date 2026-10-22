@@ -2,14 +2,15 @@
  * Frontend data access (Frontend & Design). Every call goes through Architect's typed `api()` client
  * (OWNERSHIP rule 1) — EXCEPT when the dev fixture layer is explicitly enabled.
  *
- * Fixtures are used only when NEXT_PUBLIC_USE_FIXTURES === "true" AND the build is not a Vercel production
- * deployment (NEXT_PUBLIC_VERCEL_ENV !== "production"). A banner is shown on every page while active.
+ * Fixtures are used only when allowed by ./fixtures-guard.ts (which fails production builds that request them).
+ * A banner is shown on every page while active.
  */
 import { api, type ApiResult, type RequestArgs } from "@/lib/api-client";
 import type { EndpointName } from "@/contracts";
+import { FIXTURES_ENABLED } from "./fixtures-guard";
 
 export function usingFixtures(): boolean {
-  return process.env.NEXT_PUBLIC_USE_FIXTURES === "true" && process.env.NEXT_PUBLIC_VERCEL_ENV !== "production";
+  return FIXTURES_ENABLED;
 }
 
 /** Absolute origin for server-side fetches to our own /api/v1 (route handlers live in the same app). */
@@ -18,8 +19,7 @@ function serverOrigin(): string {
 }
 
 export async function call<N extends EndpointName>(name: N, args: RequestArgs<N> = {} as RequestArgs<N>): Promise<ApiResult<N>> {
-  // Env checks are written inline so the bundler constant-folds them and drops the fixture chunk from normal builds.
-  if (process.env.NEXT_PUBLIC_USE_FIXTURES === "true" && process.env.NEXT_PUBLIC_VERCEL_ENV !== "production") {
+  if (FIXTURES_ENABLED) {
     const { mockApi } = await import("@/dev-fixtures/mock-api");
     return mockApi(name, args);
   }

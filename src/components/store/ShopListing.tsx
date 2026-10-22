@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { toMinor } from "@/lib/money";
+import { formatMoney, toMinor } from "@/lib/money";
 import { call } from "@/lib/store/data-source";
 import { apiLocale } from "@/lib/store/i18n-helpers";
 import { Link } from "@/i18n/navigation";
@@ -12,9 +12,6 @@ export type ShopSearchParams = { [k: string]: string | string[] | undefined };
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) || undefined;
 
-/** Facet values until the API exposes facets (requested from Backend). */
-const SIZE_OPTIONS = ["XS", "S", "M", "L", "34", "36", "37", "38", "39", "40", "41"];
-const COLOUR_OPTIONS = ["Ivory", "Taupe", "Dusty Rose", "Blush", "Camel", "Espresso", "Gold"];
 
 function majorToMinor(v: string | undefined, currency: string | undefined): number | undefined {
   if (!v || !currency) return undefined;
@@ -41,9 +38,11 @@ export async function ShopListing({ locale, category, searchParams, title, intro
   const maxMajor = first(searchParams.max);
   const cursor = first(searchParams.cursor);
 
-  // Currency comes from the catalog itself (never hardcoded) — used to convert the price filter to minor units.
-  const probe = await call("listProducts", { query: { locale: l, limit: 1 } });
-  const currency = probe.ok ? probe.data.data[0]?.currency : undefined;
+  // Filter values come from GET /products/facets; currency comes from the catalog (never hardcoded) and is
+  // used to convert the price filter (entered in major units) to minor units.
+  const facetsRes = await call("productFacets", { query: { locale: l, category } });
+  const facets = facetsRes.ok ? facetsRes.data.data : { sizes: [], colours: [], priceMinor: null };
+  const currency = facets.priceMinor?.currency;
 
   const res = await call("listProducts", {
     query: {
@@ -81,8 +80,9 @@ export async function ShopListing({ locale, category, searchParams, title, intro
       <ShopFilters
         action={category ? `/${locale}/shop/${category}` : `/${locale}/shop`}
         values={{ sort, size: size ?? "", colour: colour ?? "", min: minMajor ?? "", max: maxMajor ?? "" }}
-        sizes={SIZE_OPTIONS}
-        colours={COLOUR_OPTIONS}
+        sizes={facets.sizes.map((f) => ({ value: f.value, label: `${f.label} (${f.count})` }))}
+        colours={facets.colours.map((f) => ({ value: f.value, label: `${f.label} (${f.count})` }))}
+        priceRange={facets.priceMinor ? { min: formatMoney(facets.priceMinor.min, facets.priceMinor.currency, locale), max: formatMoney(facets.priceMinor.max, facets.priceMinor.currency, locale) } : null}
         currency={currency ?? ""}
         labels={{
           filters: t("filters"), size: t("size"), anySize: t("anySize"), colour: t("colour"), anyColour: t("anyColour"),

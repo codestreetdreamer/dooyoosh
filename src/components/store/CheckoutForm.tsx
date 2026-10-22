@@ -23,6 +23,20 @@ type FieldErrors = Partial<Record<keyof Fields, string>>;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^\+?[0-9 ()-]{6,20}$/;
 
+const FIELD_KEYS: (keyof Fields)[] = ["email", "phone", "fullName", "line1", "line2", "city", "region", "postalCode", "country"];
+
+/** Map 400 VALIDATION_ERROR details.issues (Zod issues: { path, message }) onto form fields. */
+function fieldErrorsFromIssues(details: Record<string, unknown>, fallback: string): FieldErrors {
+  const out: FieldErrors = {};
+  const issues = Array.isArray(details.issues) ? (details.issues as { path?: unknown[]; message?: string }[]) : [];
+  for (const issue of issues) {
+    const path = (issue.path ?? []).map(String);
+    const key = [...path].reverse().find((p): p is keyof Fields => (FIELD_KEYS as string[]).includes(p));
+    if (key && !out[key]) out[key] = issue.message && issue.message.length < 120 ? issue.message : fallback;
+  }
+  return out;
+}
+
 function newKey(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -123,6 +137,22 @@ export function CheckoutForm() {
       const code = res.error.code;
       const known = ["OUT_OF_STOCK", "PRICE_CHANGED", "COUNTRY_NOT_SHIPPABLE", "PAYMENT_ERROR", "VALIDATION_ERROR"] as const;
       setBanner((known as readonly string[]).includes(code) ? t(code as (typeof known)[number]) : t("GENERIC"));
+      if (code === "VALIDATION_ERROR") {
+        // 400: show per-field errors from the server (or client-side contract check in api-client).
+        const fe = fieldErrorsFromIssues(res.error.details, t("required"));
+        setErrors(fe);
+        const firstKey = Object.keys(fe)[0];
+        if (firstKey) {
+          document.getElementById(`co-${firstKey}`)?.focus();
+          return;
+        }
+      }
+      if (code === "COUNTRY_NOT_SHIPPABLE") {
+        // 422 is only ever COUNTRY_NOT_SHIPPABLE.
+        setErrors({ country: t("COUNTRY_NOT_SHIPPABLE") });
+        document.getElementById("co-country")?.focus();
+        return;
+      }
       if (code === "OUT_OF_STOCK" || code === "PRICE_CHANGED") {
         // Server rejected the bag (details.variantIds): refresh prices/availability from the server and let the customer review.
         idemKey.current = newKey();
@@ -193,9 +223,10 @@ export function CheckoutForm() {
             {field("postalCode", t("postalCode"), { autoComplete: "postal-code" })}
             <div>
               <label htmlFor="co-country" className="mb-1.5 block text-xs uppercase tracking-[0.14em] text-muted">{t("country")}</label>
-              <select id="co-country" name="country" value={f.country} onChange={set("country")} autoComplete="country" className="field">
+              <select id="co-country" name="country" value={f.country} onChange={set("country")} autoComplete="country" className="field" aria-invalid={errors.country ? true : undefined} aria-describedby={errors.country ? "co-country-err" : undefined}>
                 {COUNTRIES.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
               </select>
+              {errors.country ? <p id="co-country-err" className="mt-1 text-sm text-danger">{errors.country}</p> : null}
             </div>
           </div>
         </fieldset>

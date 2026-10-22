@@ -87,6 +87,25 @@ export async function mockApi<N extends EndpointName>(name: N, args: RequestArgs
       const next = start + limit < list.length ? String(start + limit) : null;
       return ok({ data: page.map(toCard), page: { cursor: next, limit } });
     }
+    case "productFacets": {
+      const list = q.category ? fixtureProducts.filter((p) => p.categorySlug === q.category) : fixtureProducts;
+      const inStock = list.filter((p) => p.available);
+      const sizes = new Map<string, { count: number; sizeSystem: string }>();
+      const colours = new Map<string, { count: number; hex: string | null }>();
+      for (const p of inStock) {
+        const av = p.variants.filter((v) => v.available);
+        for (const sz of new Set(av.map((v) => v.size).filter((x): x is string => !!x))) sizes.set(sz, { count: (sizes.get(sz)?.count ?? 0) + 1, sizeSystem: p.sizeSystem });
+        for (const c of new Set(av.map((v) => v.colour).filter((x): x is string => !!x))) colours.set(c, { count: (colours.get(c)?.count ?? 0) + 1, hex: av.find((v) => v.colour === c)?.colourHex ?? null });
+      }
+      const prices = inStock.map((p) => p.priceFromMinor);
+      return ok({
+        data: {
+          sizes: [...sizes].map(([value, v]) => ({ value, label: value, count: v.count, sizeSystem: v.sizeSystem })),
+          colours: [...colours].map(([value, v]) => ({ value, label: value, count: v.count, hex: v.hex })),
+          priceMinor: prices.length ? { min: Math.min(...prices), max: Math.max(...prices), currency: inStock[0]!.currency } : null,
+        },
+      });
+    }
     case "getProduct": {
       const p = fixtureProducts.find((x) => x.slug === a.params?.slug);
       return p ? ok({ data: p }) : fail(404, "NOT_FOUND", "Product not found");
