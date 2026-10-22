@@ -12,6 +12,7 @@ type Def<N extends EndpointName> = Endpoints[N];
 type In<T> = T extends z.ZodType ? z.input<T> : never;
 type Out<T> = T extends z.ZodType ? z.output<T> : unknown;
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- `{} extends T` detects all-optional inputs
 type MaybeKey<K extends string, T> = [T] extends [never] ? { [P in K]?: never } : {} extends T ? { [P in K]?: T } : { [P in K]: T };
 
 export type RequestArgs<N extends EndpointName> = MaybeKey<"params", In<Def<N> extends { params: infer P } ? P : never>> &
