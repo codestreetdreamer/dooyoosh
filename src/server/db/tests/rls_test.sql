@@ -52,7 +52,7 @@ do $$
 declare f text; r text;
 begin
   foreach f in array array[
-    'public.reserve_checkout(uuid,jsonb,timestamptz)', 'public.convert_checkout_to_order(uuid,jsonb,text)',
+    'public.reserve_checkout(uuid,jsonb,timestamptz,text)', 'public.checkout_id_for_idempotency_key(uuid,text)', 'public.convert_checkout_to_order(uuid,jsonb,text)',
     'public.release_checkout(uuid,text)', 'public.release_expired_reservations(timestamptz,integer)',
     'public.adjust_stock(uuid,integer,public.inventory_movement_reason,text,uuid)',
     'public.restock_order(uuid,public.inventory_movement_reason,uuid,text)',
@@ -84,7 +84,7 @@ begin
      or has_column_privilege('service_role', 'public.product_variants', 'stock_on_hand', 'UPDATE') then
     raise exception 'FAIL: service_role can write ledger/stock directly';
   end if;
-  raise notice 'PASS grants: 8 functions service_role-only + definer + search_path; RLS on all tables; views invoker; stock columns hidden';
+  raise notice 'PASS grants: 9 functions service_role-only + definer + search_path; RLS on all tables; views invoker; stock columns hidden';
 end $$;
 
 -- ---------- anon ----------

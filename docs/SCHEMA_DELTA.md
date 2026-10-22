@@ -55,3 +55,12 @@ Numbered B18–B22 because B17 above is already used (checkouts.idempotency_key)
 | B20 | `convert_checkout_to_order(p_checkout_id, p_order, p_conflict_mode text default 'mark')`; `'abort'` raises `STOCK_CONFLICT` (DETAIL = variant ids) and rolls back instead of creating a `stock_conflict` order | Payme Perform / Click Complete can refuse before money is captured | ✅ feat/db (0002) |
 | B21 | `adjust_stock(..., p_actor_id uuid)` accepts NULL actor (system/cron/provider callback) | System adjustments | ✅ feat/db (0002) |
 | B22 | Fiscal fields (`ikpu_code`, `package_code`, `vat_rate_bp`) exposed in `storefront_variants`; convert prefers snapshot `ikpuCode/packageCode/vatRateBp` (contract `CheckoutSnapshotLine`), falling back to `products` | ZRU-792 fiscal receipts | ✅ feat/db (0003/0002) |
+
+
+## E. Backend & Database — local migrations 0005/0006 (2026-10-22, NOT on staging until QA green)
+- B23 `products.vat_rate_bp` NOT NULL, no default (Architect); convert has no 1200 fallback; seeds write 1200 explicitly. ✅ 0005/0006
+- B24 `access_token_hash` = hex HMAC_SHA256(ORDER_TOKEN_SECRET, token) by Payments; DB CHECK `^[0-9a-f]{64}$` on checkouts + orders. ✅ 0005
+- B25 `provider_transactions.seq` bigint identity (UNIQUE (provider, seq)) + `provider_time` bigint ms nullable (index (provider, provider_time)) for Payme GetStatement. ✅ 0005
+- B26 `refunds.idempotency_key` uuid → text NOT NULL UNIQUE (1..200). ✅ 0005
+- B27 convert conflict modes `record` (default) | `abort`; abort returns `aborted` and writes nothing. ✅ 0006
+- B28 `checkouts.idempotency_payload_hash` + `IDEMPOTENCY_CONFLICT` (reserve_checkout p_payload_hash, `checkout_id_for_idempotency_key`). ✅ 0005/0006 — needs an ERROR_CODES entry (409) from the Architect.

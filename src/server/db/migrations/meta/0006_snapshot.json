@@ -1,6 +1,6 @@
 {
-  "id": "45606440-a77f-4f09-b2e8-de991f273b75",
-  "prevId": "56fecd0d-b4f4-4183-b409-acd747e6aaaf",
+  "id": "e1c372ac-984f-491c-a730-2a323adf39d6",
+  "prevId": "444dc668-f9cb-4bdd-828a-c8ab2f24d322",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1521,6 +1521,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "idempotency_payload_hash": {
+          "name": "idempotency_payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "subtotal_cents": {
           "name": "subtotal_cents",
           "type": "bigint",
@@ -1683,6 +1689,14 @@
         "checkouts_totals_nonneg": {
           "name": "checkouts_totals_nonneg",
           "value": "\"checkouts\".\"subtotal_cents\" >= 0 AND \"checkouts\".\"shipping_cents\" >= 0 AND \"checkouts\".\"tax_cents\" >= 0 AND \"checkouts\".\"discount_cents\" >= 0 AND \"checkouts\".\"total_cents\" >= 0"
+        },
+        "checkouts_idempotency_payload_hash_fmt": {
+          "name": "checkouts_idempotency_payload_hash_fmt",
+          "value": "\"checkouts\".\"idempotency_payload_hash\" IS NULL OR \"checkouts\".\"idempotency_payload_hash\" ~ '^[0-9a-f]{64}$'"
+        },
+        "checkouts_idempotency_key_has_hash": {
+          "name": "checkouts_idempotency_key_has_hash",
+          "value": "\"checkouts\".\"idempotency_key\" IS NULL OR \"checkouts\".\"idempotency_payload_hash\" IS NOT NULL"
         },
         "checkouts_access_token_hash_fmt": {
           "name": "checkouts_access_token_hash_fmt",

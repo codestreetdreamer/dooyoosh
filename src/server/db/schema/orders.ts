@@ -34,6 +34,8 @@ export const checkouts = pgTable("checkouts", {
   shippingMethodId: uuid("shipping_method_id").notNull().references(() => shippingMethods.id),
   // client-supplied UUID: retries of the same submit return the same checkout
   idempotencyKey: uuid("idempotency_key").unique(),
+  // 0005: hex sha256 of the canonical createCheckout payload (computed by Payments); same key + different hash => IDEMPOTENCY_CONFLICT (409)
+  idempotencyPayloadHash: text("idempotency_payload_hash"),
   subtotalCents: bigint("subtotal_cents", { mode: "number" }).notNull(),
   shippingCents: bigint("shipping_cents", { mode: "number" }).notNull(),
   taxCents: bigint("tax_cents", { mode: "number" }).notNull().default(0),
@@ -51,6 +53,8 @@ export const checkouts = pgTable("checkouts", {
   updatedAt: updatedAt(),
 }, (t) => [
   check("checkouts_totals_nonneg", sql`${t.subtotalCents} >= 0 AND ${t.shippingCents} >= 0 AND ${t.taxCents} >= 0 AND ${t.discountCents} >= 0 AND ${t.totalCents} >= 0`),
+  check("checkouts_idempotency_payload_hash_fmt", sql`${t.idempotencyPayloadHash} IS NULL OR ${t.idempotencyPayloadHash} ~ '^[0-9a-f]{64}$'`),
+  check("checkouts_idempotency_key_has_hash", sql`${t.idempotencyKey} IS NULL OR ${t.idempotencyPayloadHash} IS NOT NULL`),
   check("checkouts_access_token_hash_fmt", sql`${t.accessTokenHash} ~ '^[0-9a-f]{64}$'`),
   check("checkouts_total_sum", sql`${t.totalCents} = ${t.subtotalCents} + ${t.shippingCents} + ${t.taxCents} - ${t.discountCents}`),
   unique("checkouts_provider_session_uq").on(t.provider, t.providerSessionId),

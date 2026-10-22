@@ -64,7 +64,7 @@ declare
   c uuid := (select id from public.product_variants where sku = 'FT-C');
   d uuid := (select id from public.product_variants where sku = 'FT-D');
   co1 uuid; co2 uuid; co3 uuid; co4 uuid; co5 uuid;
-  res jsonb; res2 jsonb; det text; n int; s record; tot bigint;
+  res jsonb; res2 jsonb; res3 jsonb; det text; n int; s record; tot bigint;
 begin
   -- 1. reserve: happy path + reserved_until
   co1 := pg_temp.mk_checkout(jsonb_build_array(jsonb_build_object('variant_id', a, 'quantity', 2),
@@ -160,15 +160,20 @@ begin
                                                                    'amount_minor', tot, 'currency', 'UZS'));
   if res2->>'status' <> 'paid' then raise exception 'FAIL 6b: %', res2; end if;
   s := pg_temp.stock('FT-C'); if s.on_hand <> 0 or s.reserved <> 0 then raise exception 'FAIL 6b'; end if;
-  -- abort mode: raises STOCK_CONFLICT and leaves no order behind
+  -- abort mode (contract conflictMode 'abort'): returns status 'aborted', writes nothing
   co4 := pg_temp.mk_checkout(jsonb_build_array(jsonb_build_object('variant_id', d, 'quantity', 1)));
   perform public.reserve_checkout(co4, jsonb_build_array(jsonb_build_object('variant_id', d, 'quantity', 1)), now() + interval '35 min');
   perform public.release_checkout(co4, 'expired');
   select total_cents into tot from public.checkouts where id = co4;
-  det := pg_temp.expect_error(format('select public.convert_checkout_to_order(%L, %L, ''abort'')', co4,
-    jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-abort', 'amount_minor', tot, 'currency', 'UZS')), 'STOCK_CONFLICT');
-  if det::jsonb <> to_jsonb(array[d]) or exists (select 1 from public.orders where checkout_id = co4) then
-    raise exception 'FAIL 6c: abort mode left an order or wrong detail %', det; end if;
+  res3 := public.convert_checkout_to_order(co4, jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-abort',
+                                                                  'amount_minor', tot, 'currency', 'UZS'), 'abort');
+  if res3->>'status' <> 'aborted' or res3->'conflict_variant_ids' <> to_jsonb(array[d]) or res3->>'order_id' is not null
+     or exists (select 1 from public.orders where checkout_id = co4)
+     or exists (select 1 from public.payments where provider_payment_id = 'pay-abort') then
+    raise exception 'FAIL 6c: abort mode wrote something or wrong result %', res3; end if;
+  -- 'mark' is gone (contract: 'record' | 'abort')
+  det := pg_temp.expect_error(format('select public.convert_checkout_to_order(%L, %L, ''mark'')', co4,
+    jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-mark', 'amount_minor', tot, 'currency', 'UZS')), 'VALIDATION_ERROR');
   raise notice 'PASS 6 QA-06 late convert after release -> stock_conflict, other buyer''s reservation intact; expiry sweep + idempotent release';
 
   -- 7. restock_order (Payme CancelTransaction after Perform): idempotent; stock_conflict order restocks 0
@@ -231,6 +236,21 @@ begin
   begin update public.checkouts set access_token_hash = upper(access_token_hash) || '' where email = 'ft@test.invalid' and access_token_hash ~ '[a-f]';
         if found then raise exception 'FAIL 11: upper-case hash accepted'; end if;
   exception when check_violation then null; end;
+  -- 12. idempotency payload hash (0005/0006): same key + different payload => IDEMPOTENCY_CONFLICT
+  update public.checkouts set idempotency_key = '00000000-0000-4000-8000-0000000012aa', idempotency_payload_hash = repeat('1', 64)
+   where id = co4;
+  begin update public.checkouts set idempotency_payload_hash = null where id = co4;
+        raise exception 'FAIL 12: key without payload hash accepted';
+  exception when check_violation then null; end;
+  if public.checkout_id_for_idempotency_key('00000000-0000-4000-8000-0000000012aa', repeat('1', 64)) <> co4 then
+    raise exception 'FAIL 12: lookup'; end if;
+  if public.checkout_id_for_idempotency_key('00000000-0000-4000-8000-0000000012ab', repeat('1', 64)) is not null then
+    raise exception 'FAIL 12: unknown key'; end if;
+  det := pg_temp.expect_error(format('select public.checkout_id_for_idempotency_key(%L, %L)',
+    '00000000-0000-4000-8000-0000000012aa', repeat('2', 64)), 'IDEMPOTENCY_CONFLICT');
+  det := pg_temp.expect_error(format('select public.reserve_checkout(%L, %L, now() + interval ''35 min'', %L)', co4,
+    jsonb_build_array(jsonb_build_object('variant_id', d, 'quantity', 1)), repeat('2', 64)), 'IDEMPOTENCY_CONFLICT');
+  raise notice 'PASS 12 idempotency payload hash: lookup + IDEMPOTENCY_CONFLICT on reserve and lookup';
   raise notice 'PASS 11 IKPU format ^(DEMO-)?[0-9]{17}$, publish requires ikpu + published_at, ikpu_is_demo flag';
 end $$;
 

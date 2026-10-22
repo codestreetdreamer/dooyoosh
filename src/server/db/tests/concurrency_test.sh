@@ -105,15 +105,16 @@ for i in $(seq 1 10); do
   ( "${P[@]}" > "$dir/$i" 2>&1 <<SQL
 begin;
 insert into public.checkouts (email, locale, currency, items, shipping_address, shipping_method_id, subtotal_cents, shipping_cents,
-                              total_cents, provider, access_token_hash, expires_at, idempotency_key)
+                              total_cents, provider, access_token_hash, expires_at, idempotency_key, idempotency_payload_hash)
 select 'idem@test.invalid', 'en', 'UZS',
        jsonb_build_array(jsonb_build_object('variantId', v.id, 'sku', v.sku, 'productName', 'CC', 'size', 'L', 'colour', null,
                                             'unitPriceMinor', 10000000, 'quantity', 1, 'lineTotalMinor', 10000000)),
-       '{}', sm.id, 10000000, 0, 10000000, 'mock', repeat('ab', 32), now() + interval '30 min', '$KEY'
+       '{}', sm.id, 10000000, 0, 10000000, 'mock', repeat('ab', 32), now() + interval '30 min', '$KEY', repeat('cd', 32)
   from public.product_variants v, public.shipping_methods sm where v.sku = '$TAG-FIVE' and sm.code = '$TAG'
 on conflict (idempotency_key) do nothing;
-select public.reserve_checkout(c.id, jsonb_build_array(jsonb_build_object('variant_id', v.id, 'quantity', 1)), now() + interval '35 min')
-  from public.checkouts c, public.product_variants v where c.idempotency_key = '$KEY' and v.sku = '$TAG-FIVE';
+select public.reserve_checkout(public.checkout_id_for_idempotency_key('$KEY', repeat('cd', 32)),
+         jsonb_build_array(jsonb_build_object('variant_id', v.id, 'quantity', 1)), now() + interval '35 min', repeat('cd', 32))
+  from public.product_variants v where v.sku = '$TAG-FIVE';
 select 'ID=' || id || ' UNTIL=' || reserved_until from public.checkouts where idempotency_key = '$KEY';
 commit;
 SQL
@@ -126,4 +127,7 @@ rm -rf "$dir"
 nres=$("${P[@]}" -c "select count(*) from public.stock_reservations r join public.checkouts c on c.id = r.checkout_id where c.idempotency_key = '$KEY'")
 [ "$ids" = 1 ] && [ "$okn" = 10 ] && [ "$nres" = 1 ] || fail "idempotency: distinct ids=$ids callers ok=$okn reservations=$nres"
 echo "PASS idempotencyKey: 10 parallel submits with one key -> 1 checkout, 1 reservation, same id + reserved_until for all 10"
+conf=$("${P[@]}" -c "select public.checkout_id_for_idempotency_key('$KEY', repeat('ef', 32))" 2>&1 || true)
+echo "$conf" | grep -q IDEMPOTENCY_CONFLICT || fail "idempotency: different payload not rejected: $conf"
+echo "PASS idempotencyKey: same key + different payload hash -> IDEMPOTENCY_CONFLICT"
 echo "ALL CONCURRENCY TESTS PASSED"

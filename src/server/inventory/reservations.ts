@@ -36,6 +36,8 @@ export function mapDbError(e: unknown): never {
       throw ApiError.priceChanged(detailIds(pg.detail));
     case "NOT_FOUND":
       throw ApiError.notFound();
+    case "IDEMPOTENCY_CONFLICT":
+      throw new IdempotencyConflictError();
     case "VALIDATION_ERROR":
     case "INSUFFICIENT_STOCK":
     case "INVALID_STATE":
@@ -56,28 +58,42 @@ function safeJson(s: string | undefined): Record<string, unknown> {
 }
 
 export interface ConvertOptions {
-  /** 'mark' (default): late payment -> stock_conflict order. 'abort': throw StockConflictError, nothing written. */
-  conflictMode?: "mark" | "abort";
+  /** 'record' (default): late payment -> stock_conflict order (auto-refund). 'abort': nothing written, status 'aborted'. */
+  conflictMode?: "record" | "abort";
   /** raw provider payload stored on payments.raw */
   raw?: unknown;
+  tx?: TxLike;
 }
 
-export class StockConflictError extends Error {
-  constructor(readonly variantIds: string[]) {
-    super("STOCK_CONFLICT");
-    this.name = "StockConflictError";
+/**
+ * Same idempotencyKey reused with a different createCheckout payload (DB: IDEMPOTENCY_CONFLICT).
+ * The API should answer 409; `src/contracts/common.ERROR_CODES` has no such code yet (Architect to decide).
+ */
+export class IdempotencyConflictError extends Error {
+  readonly status = 409;
+  constructor() {
+    super("IDEMPOTENCY_CONFLICT");
+    this.name = "IdempotencyConflictError";
   }
 }
 
 export const inventory: InventoryService & {
-  convertWith(checkoutId: string, order: ConvertOrderInput, opts: ConvertOptions, tx?: TxLike): Promise<ConvertResult>;
+  /** reserve + idempotency payload check (p_payload_hash = hex sha256 of the createCheckout payload). */
+  reserveWith(checkoutId: string, lines: ReserveLine[], expiresAt: Date, opts: { payloadHash?: string; tx?: TxLike }): Promise<ReserveResult>;
+  convertWith(checkoutId: string, order: ConvertOrderInput, opts: ConvertOptions): Promise<ConvertResult>;
+  /** checkout id stored for an idempotencyKey (null if none); throws IdempotencyConflictError if the payload hash differs. */
+  checkoutIdForIdempotencyKey(key: string, payloadHash: string, tx?: TxLike): Promise<string | null>;
   restockOrder(orderId: string, reason?: "return" | "cancellation", actorId?: string | null, note?: string, tx?: TxLike): Promise<number>;
 } = {
-  async reserve(checkoutId: string, lines: ReserveLine[], expiresAt: Date, tx?: TxLike): Promise<ReserveResult> {
+  reserve(checkoutId: string, lines: ReserveLine[], expiresAt: Date, tx?: TxLike): Promise<ReserveResult> {
+    return this.reserveWith(checkoutId, lines, expiresAt, { tx });
+  },
+
+  async reserveWith(checkoutId, lines, expiresAt, opts) {
     const items = JSON.stringify(lines.map((l) => ({ variant_id: l.variantId, quantity: l.quantity })));
     try {
-      await exec(tx).execute(
-        sql`select public.reserve_checkout(${checkoutId}::uuid, ${items}::jsonb, ${expiresAt.toISOString()}::timestamptz)`,
+      await exec(opts.tx).execute(
+        sql`select public.reserve_checkout(${checkoutId}::uuid, ${items}::jsonb, ${expiresAt.toISOString()}::timestamptz, ${opts.payloadHash ?? null}::text)`,
       );
       return { ok: true };
     } catch (e) {
@@ -87,11 +103,23 @@ export const inventory: InventoryService & {
     }
   },
 
-  convert(checkoutId: string, order: ConvertOrderInput, tx?: TxLike): Promise<ConvertResult> {
-    return this.convertWith(checkoutId, order, {}, tx);
+  convert(checkoutId: string, order: ConvertOrderInput, opts?: { conflictMode?: "record" | "abort"; tx?: TxLike }): Promise<ConvertResult> {
+    return this.convertWith(checkoutId, order, opts ?? {});
   },
 
-  async convertWith(checkoutId, order, opts, tx) {
+  async checkoutIdForIdempotencyKey(key, payloadHash, tx) {
+    try {
+      const r = rows<{ id: string | null }>(
+        await exec(tx).execute(sql`select public.checkout_id_for_idempotency_key(${key}::uuid, ${payloadHash}::text) as id`),
+      );
+      return r[0]?.id ?? null;
+    } catch (e) {
+      return mapDbError(e);
+    }
+  },
+
+  async convertWith(checkoutId, order, opts) {
+    const tx = opts.tx;
     const payload = JSON.stringify({
       reference: order.reference,
       provider: order.provider,
@@ -104,15 +132,14 @@ export const inventory: InventoryService & {
     try {
       const r = rows<{ r: { order_id: string; reference: string; status: string; conflict_variant_ids: string[] } }>(
         await exec(tx).execute(
-          sql`select public.convert_checkout_to_order(${checkoutId}::uuid, ${payload}::jsonb, ${opts.conflictMode ?? "mark"}) as r`,
+          sql`select public.convert_checkout_to_order(${checkoutId}::uuid, ${payload}::jsonb, ${opts.conflictMode ?? "record"}) as r`,
         ),
       )[0]!.r;
+      if (r.status === "aborted") return { status: "aborted", conflictVariantIds: r.conflict_variant_ids ?? [] };
       if (r.status === "paid") return { status: "paid", orderId: r.order_id, reference: r.reference };
       if (r.status === "already_converted") return { status: "already_converted", orderId: r.order_id, reference: r.reference };
       return { status: "stock_conflict", orderId: r.order_id, reference: r.reference, conflictVariantIds: r.conflict_variant_ids };
     } catch (e) {
-      const pg = asPgAppError(e);
-      if (pg?.message === "STOCK_CONFLICT") throw new StockConflictError(detailIds(pg.detail));
       return mapDbError(e);
     }
   },
