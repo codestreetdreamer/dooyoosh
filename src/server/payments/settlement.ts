@@ -7,7 +7,7 @@
 import { newOrderReference } from "../orders/reference";
 import { assertPaymentCapture, transitionOrder, type TransitionCause } from "../orders/transitions";
 import type { PaymentProvider, PaymentProviderName } from "./types";
-import { SYSTEM_ACTOR_ID, type PaymentDeps } from "./deps";
+import type { PaymentDeps } from "./deps";
 
 export type CaptureResult =
   | { kind: "paid" | "already"; orderId: string; reference: string }
@@ -86,9 +86,7 @@ export async function refundAfterProviderCancel(
   await deps.repo.upsertPayment({ orderId: p.orderId, provider: p.provider, providerPaymentId: p.providerPaymentId, amountMinor: p.amountMinor, currency: p.currency, status: "refunded", raw: { cancel: p.reason } });
   await deps.repo.recordRefund({ orderId: p.orderId, provider: p.provider, providerPaymentId: p.providerPaymentId, amountMinor: p.amountMinor, reason: p.reason, providerRefundId: `${p.providerPaymentId}:cancel`, status: "succeeded", idempotencyKey: `provider_cancel:${p.provider}:${p.providerPaymentId}` });
   if (res.changed && tookStock) {
-    for (const line of order.items) {
-      await deps.inventory.adjust({ variantId: line.variantId, delta: line.quantity, reason: "return", note: `${p.provider} cancel ${p.providerPaymentId} (${order.reference})` }, SYSTEM_ACTOR_ID);
-    }
+    await deps.inventory.restockOrder(p.orderId, "return", null, `${p.provider} cancel ${p.providerPaymentId} (${order.reference})`);
   }
   if (res.changed) await deps.notifier.orderRefunded({ orderId: p.orderId, reference: order.reference, amountMinor: p.amountMinor, currency: p.currency });
 }

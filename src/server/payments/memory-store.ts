@@ -42,10 +42,10 @@ export class MemoryStore implements CommerceRepo, InventoryService {
   constructor(private readonly clock: () => Date = () => new Date()) {}
 
   // ---------- seeding helpers (tests / demo)
-  addVariant(v: Partial<VariantForCheckout> & { variantId: string; unitPriceMinor: number; currency: string; stockOnHand: number }) {
+  addVariant(v: Partial<VariantForCheckout> & { variantId: string; unitPriceMinor: number; currency: string; stockOnHand: number; vatRateBp: number }) {
     this.s.variants.set(v.variantId, {
       sku: `DEMO-${v.variantId.slice(0, 4)}`, productName: "Demo product", size: null, colour: null, isActive: true, isPublished: true, weightGrams: 500,
-      ikpuCode: null, packageCode: null, vatRateBp: null, available: 0, stockReserved: 0, ...v,
+      ikpuCode: null, packageCode: null, available: 0, stockReserved: 0, ...v,
     } as VariantState);
   }
   addShippingMethod(m: Omit<ShippingMethodForCheckout, "countryShippable"> & { countries: string[] }) {
@@ -252,7 +252,17 @@ export class MemoryStore implements CommerceRepo, InventoryService {
     c.status = "completed";
     return to === "paid" ? { status: "paid", orderId, reference: input.reference } : { status: "stock_conflict", orderId, reference: input.reference, conflictVariantIds: conflict.map((r) => r.variantId) };
   }
-  async adjust(input: AdjustStockInput, actorId: string) {
+  /** restock_order(): puts back what the order's 'sale' movements took; idempotent per order (second call -> 0). */
+  async restockOrder(orderId: string, reason: "return" | "cancellation" = "return", actorId: string | null = null, note?: string) {
+    if (this.s.movements.some((m) => m.orderId === orderId && (m.reason === "return" || m.reason === "cancellation"))) return 0;
+    const sold = this.s.movements.filter((m) => m.orderId === orderId && m.reason === "sale");
+    for (const m of sold) {
+      this.s.variants.get(m.variantId)!.stockOnHand += -m.delta;
+      this.s.movements.push({ variantId: m.variantId, delta: -m.delta, reason, orderId, note: note ?? null, actorId });
+    }
+    return sold.length;
+  }
+  async adjust(input: AdjustStockInput, actorId: string | null) {
     const v = this.s.variants.get(input.variantId);
     if (!v) throw new Error("variant not found");
     if (!Number.isInteger(input.delta) || input.delta === 0 || v.stockOnHand + input.delta < v.stockReserved) throw new Error("invalid delta");

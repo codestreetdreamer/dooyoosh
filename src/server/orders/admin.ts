@@ -62,9 +62,7 @@ export async function adminTransitionOrder(deps: PaymentDeps, id: string, to: Or
   // Cancelling an order that already took stock puts it back (once: only when this call changed the status).
   // Money is NOT returned automatically; the admin refunds via /refund (the UI should prompt).
   if (to === "cancelled" && r.changed && ["paid", "fulfilling", "partially_refunded"].includes(before.status)) {
-    for (const l of before.items) {
-      await deps.inventory.adjust({ variantId: l.variantId, delta: l.quantity, reason: "adjustment", note: `cancel ${before.reference}` }, actor.actorId);
-    }
+    await deps.inventory.restockOrder(id, "cancellation", actor.actorId, `admin cancel ${before.reference}`);
   }
   return toAdminOrder(await load(deps, id));
 }

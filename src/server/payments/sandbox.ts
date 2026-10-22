@@ -16,7 +16,7 @@ export async function simulateSandboxPayment(deps: PaymentDeps, provider: Paymen
   // defence in depth; the route already returned 404 via sandboxSimulatorEnabled(process.env)
   if (provider.mode !== "sandbox" || (provider.name !== "mock" && provider.name !== "click")) throw ApiError.notFound();
   const c = await deps.repo.getCheckout(checkoutId);
-  if (!c || !tokenMatches(token, c.accessTokenHash)) throw ApiError.notFound();
+  if (!c || !tokenMatches(deps.config.tokenSecret, token, c.accessTokenHash)) throw ApiError.notFound();
   const meta = { method: "POST", ip: null };
 
   if (provider.name === "mock") {

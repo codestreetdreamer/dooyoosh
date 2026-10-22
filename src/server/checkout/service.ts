@@ -34,7 +34,7 @@ async function openSession(deps: PaymentDeps, provider: PaymentProvider, c: NewC
     checkoutId: c.id,
     email: c.email,
     locale: c.locale as CreateCheckoutRequest["locale"],
-    lines: c.items.map((l) => ({ variantId: l.variantId, sku: l.sku, productName: l.productName, size: l.size, colour: l.colour, unitPriceMinor: l.unitPriceMinor, quantity: l.quantity, lineTotalMinor: l.lineTotalMinor })),
+    lines: c.items,
     totals: { currency: c.currency, subtotalMinor: c.subtotalMinor, shippingMinor: c.shippingMinor, taxMinor: c.taxMinor, discountMinor: c.discountMinor, totalMinor: c.totalMinor },
     successUrl,
     cancelUrl,
@@ -88,7 +88,7 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
   const c: NewCheckout = {
     id,
     idempotencyKey: req.idempotencyKey ?? null,
-    accessTokenHash: hashAccessToken(deriveAccessToken(deps.config.tokenSecret, id)),
+    accessTokenHash: hashAccessToken(deps.config.tokenSecret, deriveAccessToken(deps.config.tokenSecret, id)),
     email: req.email,
     phone: req.phone ?? req.shippingAddress.phone ?? null,
     locale: req.locale,
@@ -112,7 +112,7 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
   await repo.runInTransaction(async (tx) => {
     await repo.insertCheckout(c, tx);
     const r = await inventory.reserve(id, quote.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })), c.reservedUntil, tx);
-    if (!r.ok) throw ApiError.outOfStock(r.variantIds);
+    if (!r.ok) throw r.code === "PRICE_CHANGED" ? ApiError.priceChanged(r.variantIds) : ApiError.outOfStock(r.variantIds);
   });
 
   let session;
@@ -130,7 +130,7 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
 /** GET /checkout/{id}/status?token= — unknown id OR wrong token -> 404 (do not reveal which). */
 export async function getCheckoutStatus(deps: PaymentDeps, checkoutId: string, token: string): Promise<CheckoutStatusResponse["data"]> {
   const c = await deps.repo.getCheckout(checkoutId);
-  if (!c || !tokenMatches(token, c.accessTokenHash)) throw ApiError.notFound();
+  if (!c || !tokenMatches(deps.config.tokenSecret, token, c.accessTokenHash)) throw ApiError.notFound();
   const order = await deps.repo.getOrderByCheckout(checkoutId);
   return { checkoutStatus: c.status, orderReference: order?.reference ?? null, orderStatus: order?.status ?? null };
 }

@@ -17,8 +17,8 @@ import type { PaymentProviderName, TxLike } from "./types";
 export interface FiscalFields {
   ikpuCode: string | null;
   packageCode: string | null;
-  /** VAT in basis points, 1200 = 12% */
-  vatRateBp: number | null;
+  /** VAT in basis points (1200 = 12%). NOT NULL in products/order_items; never defaulted in code, always from the row. */
+  vatRateBp: number;
 }
 
 /** checkouts.items jsonb line = contract snapshot line + fiscal fields (PROPOSAL to Architect: add to contract). */

@@ -117,5 +117,5 @@ export function isDemoIkpu(code: string | null): boolean {
 
 /** Lines missing IKPU / package code / VAT rate, or carrying a DEMO- IKPU. Live mode refuses them (spec §13, ZRU-792). */
 export function linesMissingFiscalData(lines: CheckoutLine[]): string[] {
-  return lines.filter((l) => !l.ikpuCode || isDemoIkpu(l.ikpuCode) || !l.packageCode || l.vatRateBp === null).map((l) => l.variantId);
+  return lines.filter((l) => !l.ikpuCode || isDemoIkpu(l.ikpuCode) || !l.packageCode || !Number.isInteger(l.vatRateBp)).map((l) => l.variantId);
 }

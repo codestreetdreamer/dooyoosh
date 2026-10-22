@@ -6,7 +6,8 @@
  * SANDBOX_SIMULATOR_ENABLED=true, never on NODE_ENV:
  *  - simulator open  <=> PAYMENT_MODE === "sandbox" (exact) && SANDBOX_SIMULATOR_ENABLED === "true" (exact)
  *                        && PAYMENT_PROVIDER in {mock, click} (Payme has its own official sandbox, test.paycom.uz)
- *  - mock provider   <=> same as simulator open with PAYMENT_PROVIDER=mock. Live mode never accepts mock.
+ *  - mock provider   <=> never in live mode; under NODE_ENV=production only with PAYMENT_MODE=sandbox +
+ *                        ALLOW_MOCK_IN_PRODUCTION=true (same rule as src/lib/env.ts, Architect b0b349f).
  * An unset PAYMENT_MODE does NOT open the simulator (config defaults to sandbox, the gate does not).
  */
 type Env = Record<string, string | undefined>;
@@ -25,7 +26,6 @@ export function sandboxSimulatorEnabled(env: Env): boolean {
 /** May the mock provider (and /webhooks/mock) exist at all? */
 export function mockProviderAllowed(env: Env): boolean {
   if (env.PAYMENT_MODE === "live") return false;
-  if (sandboxFlagsOn(env)) return true;
-  // local dev / tests without the flag: allowed only outside NODE_ENV=production
-  return (env.NODE_ENV ?? "development") !== "production" && (env.PAYMENT_MODE ?? "sandbox") === "sandbox";
+  if ((env.NODE_ENV ?? "development") === "production") return env.PAYMENT_MODE === "sandbox" && env.ALLOW_MOCK_IN_PRODUCTION === "true";
+  return (env.PAYMENT_MODE ?? "sandbox") === "sandbox";
 }

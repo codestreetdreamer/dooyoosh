@@ -45,7 +45,7 @@ export function setup(providerName: "mock" | "payme" | "click" = "mock", opts: {
   const provider: PaymentProvider = createProvider(config, deps);
   const v1 = randomUUID();
   const v2 = randomUUID();
-  const fiscal = opts.fiscal ? { ikpuCode: "06109001001000000", packageCode: "1500889", vatRateBp: 1200 } : {};
+  const fiscal = opts.fiscal ? { ikpuCode: "06109001001000000", packageCode: "1500889", vatRateBp: 1200 } : { vatRateBp: 0 };
   store.addVariant({ variantId: v1, sku: "DEMO-TEE-M", productName: "Linen tee", size: "M", unitPriceMinor: 25_000_000, currency: "UZS", stockOnHand: opts.stock ?? 5, weightGrams: 300, ...fiscal });
   store.addVariant({ variantId: v2, sku: "DEMO-BAG", productName: "Tote bag", unitPriceMinor: 12_000_000, currency: "UZS", stockOnHand: opts.stock ?? 5, weightGrams: 400, ...fiscal });
   const methodId = randomUUID();

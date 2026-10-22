@@ -152,7 +152,7 @@ export class PaymeAdapter implements PaymentProvider {
 
   /** Fiscal receipt detail for CheckPerformTransaction (checkperformtransaction docs, "Добавление объекта detail"). */
   private fiscalDetail(c: CheckoutRow) {
-    if (c.items.some((l) => !l.ikpuCode || !l.packageCode || l.vatRateBp === null)) return undefined;
+    if (c.items.some((l) => !l.ikpuCode || !l.packageCode || !Number.isInteger(l.vatRateBp))) return undefined;
     // DEMO- IKPU codes must never produce a live fiscal receipt (Backend rule); in live mode refuse the payment.
     if (c.items.some((l) => isDemoIkpu(l.ikpuCode))) {
       if (this.mode === "live") throw new PaymeRpcError(E.ACCOUNT_NOT_PAYABLE, MSG.orderNotPayable, this.cfg.accountField);
@@ -167,7 +167,7 @@ export class PaymeAdapter implements PaymentProvider {
         count: l.quantity,
         code: l.ikpuCode,
         package_code: l.packageCode,
-        vat_percent: (l.vatRateBp ?? 0) / 100,
+        vat_percent: l.vatRateBp / 100,
       })),
     };
   }

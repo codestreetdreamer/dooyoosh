@@ -33,14 +33,14 @@ export function toAdminOrder(o: OrderDetail): AdminOrder {
 
 /**
  * Guest order page. Unknown reference and wrong token both -> 404 (contract: do not reveal which).
- * The token is compared as sha256 digests with timingSafeEqual (checkout/token.ts). A dummy compare runs for unknown
+ * The token is compared as HMAC digests with timingSafeEqual (checkout/token.ts). A dummy compare runs for unknown
  * references so both 404 paths do the same hashing work.
  */
 const DUMMY_HASH = "0".repeat(64);
 export async function getPublicOrder(deps: PaymentDeps, reference: string, token: string): Promise<PublicOrder> {
   const id = await deps.repo.getOrderIdByReference(reference);
   const o = id ? await deps.repo.getOrderDetail(id) : null;
-  const ok = tokenMatches(token, o?.accessTokenHash ?? DUMMY_HASH);
+  const ok = tokenMatches(deps.config.tokenSecret, token, o?.accessTokenHash ?? DUMMY_HASH);
   if (!o || !ok) throw ApiError.notFound();
   return toPublicOrder(o);
 }

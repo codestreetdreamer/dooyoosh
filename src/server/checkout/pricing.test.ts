@@ -8,7 +8,7 @@ const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const v = (id: string, over: Partial<VariantForCheckout> = {}): VariantForCheckout => ({
   variantId: id, sku: `DEMO-${id.slice(0, 2)}`, productName: "P", size: null, colour: null, unitPriceMinor: 15_000_000, currency: "UZS",
-  isActive: true, isPublished: true, available: 10, weightGrams: 200, ikpuCode: null, packageCode: null, vatRateBp: null, ...over,
+  isActive: true, isPublished: true, available: 10, weightGrams: 200, ikpuCode: null, packageCode: null, vatRateBp: 0, ...over,
 });
 const ship = (over: Partial<ShippingMethodForCheckout> = {}): ShippingMethodForCheckout => ({
   methodId: "m", name: "Courier", isActive: true, marketCurrency: "UZS", marketActive: true, countryShippable: true,
@@ -71,5 +71,18 @@ describe("computeQuote", () => {
   it("reports lines missing fiscal data", () => {
     const q = computeQuote([{ variantId: A, quantity: 1 }, { variantId: B, quantity: 1 }], [v(A), v(B, { ikpuCode: "06109001001000000", packageCode: "1", vatRateBp: 1200 })], ship(), "UZ");
     expect(linesMissingFiscalData(q.lines)).toEqual([A]);
+  });
+});
+
+describe("guest token hash (Architect cf91ef3)", () => {
+  it("hash = hex(HMAC_SHA256(secret, token)); constant-time match; malformed hash never matches", async () => {
+    const { createHmac } = await import("node:crypto");
+    const { hashAccessToken, tokenMatches } = await import("./token");
+    const h = hashAccessToken("s".repeat(32), "tok");
+    expect(h).toBe(createHmac("sha256", "s".repeat(32)).update("tok").digest("hex"));
+    expect(tokenMatches("s".repeat(32), "tok", h)).toBe(true);
+    expect(tokenMatches("t".repeat(32), "tok", h)).toBe(false);
+    expect(tokenMatches("s".repeat(32), "tok", "zz")).toBe(false);
+    expect(tokenMatches("s".repeat(32), "tok", h.toUpperCase())).toBe(false);
   });
 });

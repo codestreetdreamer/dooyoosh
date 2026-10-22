@@ -11,9 +11,3 @@ export interface PaymentDeps {
   config: PaymentConfig;
   now: () => Date;
 }
-
-/**
- * adjust_stock(p_actor_id uuid) needs an actor. Automatic restocks (provider cancel-after-perform) use this nil UUID.
- * PROPOSAL to Backend: accept NULL actor for system movements instead.
- */
-export const SYSTEM_ACTOR_ID = "00000000-0000-0000-0000-000000000000";
