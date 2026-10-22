@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useUrlToken } from "@/lib/store/url-token";
+import { call } from "@/lib/store/data-source";
 import { ErrorState } from "@/components/ui/States";
 import { DemoBanner } from "@/components/layout/DemoBanner";
 
@@ -9,7 +10,8 @@ import { DemoBanner } from "@/components/layout/DemoBanner";
  * /{locale}/checkout/sandbox-pay?checkoutId=&token=). Calls POST /api/v1/checkout/{id}/sandbox-pay, which pushes a
  * SIGNED provider callback through the normal webhook pipeline (404 unless the sandbox gate is open), then goes to
  * the return page, which reads the result from the server. No real money moves.
- * Not part of the typed contract registry yet, so it uses fetch directly (same-origin).
+ * Uses the typed `sandboxPay` endpoint (contract: token travels as a query param of the same-origin POST — never in
+ * the address bar, never logged).
  */
 export function SandboxPay({ checkoutId, locale }: { checkoutId: string | null; locale: string }) {
   const token = useUrlToken(checkoutId ? `checkout:${checkoutId}` : null);
@@ -24,21 +26,18 @@ export function SandboxPay({ checkoutId, locale }: { checkoutId: string | null; 
   const pay = async (outcome: "success" | "fail") => {
     setBusy(true);
     setError(null);
-    const qs = new URLSearchParams({ token, outcome });
-    try {
-      const res = await fetch(`/api/v1/checkout/${encodeURIComponent(checkoutId)}/sandbox-pay?${qs}`, { method: "POST", cache: "no-store", credentials: "same-origin" });
-      if (!res.ok) {
-        setBusy(false);
-        setError(res.status === 404 ? "The sandbox simulator is not enabled on this deployment." : `Sandbox payment failed (HTTP ${res.status}).`);
-        return;
-      }
-    } catch {
+    const res = await call("sandboxPay", { params: { checkoutId }, query: { token, outcome } });
+    if (!res.ok) {
       setBusy(false);
-      setError("Network error — please try again.");
+      setError(
+        res.status === 404 ? "The sandbox simulator is not enabled on this deployment."
+        : res.status === 0 ? "Network error — please try again."
+        : `Sandbox payment failed (${res.error.code}).`,
+      );
       return;
     }
-    // Token travels once more in the URL to the return page, which immediately moves it to sessionStorage and strips it.
-    window.location.assign(`/${locale}/checkout/return?checkoutId=${encodeURIComponent(checkoutId)}&token=${encodeURIComponent(token)}`);
+    // The return page reads the token from sessionStorage (same scope), so it is NOT put back into a URL.
+    window.location.assign(`/${locale}/checkout/return?checkoutId=${encodeURIComponent(checkoutId)}`);
   };
 
   return (

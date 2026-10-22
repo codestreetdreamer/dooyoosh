@@ -23,7 +23,7 @@ function serverOrigin(): string {
  * checkout, checkout status and orders go to the REAL /api/v1 routes (Payments & Orders) — for integration testing
  * before Backend's catalog API exists. Default scope "all" mocks everything.
  */
-const REAL_IN_CATALOG_SCOPE: readonly EndpointName[] = ["createCheckout", "checkoutStatus", "getOrder"];
+const REAL_IN_CATALOG_SCOPE: readonly EndpointName[] = ["createCheckout", "checkoutStatus", "sandboxPay", "getOrder"];
 
 export async function call<N extends EndpointName>(name: N, args: RequestArgs<N> = {} as RequestArgs<N>): Promise<ApiResult<N>> {
   const catalogOnly = process.env.NEXT_PUBLIC_FIXTURES_SCOPE === "catalog";

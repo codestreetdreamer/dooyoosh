@@ -175,6 +175,12 @@ export async function mockApi<N extends EndpointName>(name: N, args: RequestArgs
       if (!c || c.token !== q.token) return fail(404, "NOT_FOUND", "Not found");
       return ok({ data: { checkoutStatus: c.status, orderReference: c.reference, orderStatus: c.status === "completed" ? "paid" : null } });
     }
+    case "sandboxPay": {
+      const c = readMock(String(a.params?.checkoutId));
+      if (!c || c.token !== q.token) return fail(404, "NOT_FOUND", "Not found");
+      mockSettle(String(a.params?.checkoutId), q.outcome === "fail" ? "failed" : "succeeded");
+      return ok({ data: { callbacks: [{ status: 200, body: { mock: true } }] } });
+    }
     case "getOrder": {
       if (typeof window === "undefined") return fail(404, "NOT_FOUND", "Not found");
       const all = JSON.parse(window.localStorage.getItem(LS_KEY) ?? "{}") as Record<string, MockCheckout>;

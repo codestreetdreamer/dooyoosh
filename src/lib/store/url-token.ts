@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 
 /**
  * Guest access tokens arrive as ?token= (provider return URL / email link). To stop them leaking via Referer,
@@ -16,18 +16,24 @@ export function readToken(scope: string): string | null {
   try { return window.sessionStorage.getItem(PREFIX + scope); } catch { return null; }
 }
 
-/** Returns undefined while resolving, then the token or null. */
+/**
+ * Returns undefined while resolving, then the token or null.
+ * Order of preference: token already in sessionStorage for this scope > ?token= in the URL.
+ * The URL param is always stripped (useLayoutEffect = before first paint after hydration). Never logged.
+ */
 export function useUrlToken(scope: string | null): string | null | undefined {
   const [token, setToken] = useState<string | null | undefined>(undefined);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const url = new URL(window.location.href);
     const fromUrl = url.searchParams.get("token");
-    if (fromUrl) {
-      if (scope) storeToken(scope, fromUrl);
+    if (fromUrl !== null) {
       url.searchParams.delete("token");
-      window.history.replaceState(window.history.state, "", url.pathname + (url.search ? url.search : "") + url.hash);
+      window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
     }
-    setToken(fromUrl ?? (scope ? readToken(scope) : null));
+    const stored = scope ? readToken(scope) : null;
+    const resolved = stored ?? fromUrl ?? null;
+    if (resolved && scope && !stored) storeToken(scope, resolved);
+    setToken(resolved);
   }, [scope]);
   return token;
 }
