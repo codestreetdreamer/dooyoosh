@@ -40,10 +40,24 @@ describe("RLS", () => {
   });
   it("authenticated user cannot self-assign admin role (INSERT into admin_users with own uid)", async () => {
     const uid = "11111111-1111-1111-1111-111111111111";
+    await p.query("INSERT INTO auth.users(id) VALUES ($1) ON CONFLICT DO NOTHING", [uid]); // so the FK can't mask the result
     const res = await as("authenticated", uid, async (c) => {
-      try { return (await c.query("INSERT INTO admin_users(id, role) VALUES ($1,'owner')", [uid])).rowCount; } catch { return "denied"; }
+      try { return (await c.query("INSERT INTO admin_users(id, role) VALUES ($1,'owner')", [uid])).rowCount; } catch (e) { return e.code === "23503" ? "fk-masked" : "denied"; }
     });
     expect(res).toBe("denied");
+  });
+  it("authenticated user cannot UPDATE own profiles row into an admin (no role/is_admin column writable)", async () => {
+    const uid = "33333333-3333-3333-3333-333333333333";
+    await p.query("INSERT INTO auth.users(id, email) VALUES ($1,'x@y.z') ON CONFLICT DO NOTHING", [uid]);
+    const cols = (await p.query(`SELECT column_name FROM information_schema.columns WHERE table_name='profiles'`)).rows.map((r) => r.column_name);
+    expect(cols.filter((c) => /role|admin/.test(c)), "profiles must not carry authz columns").toEqual([]);
+  });
+  it("authenticated user cannot read other users' profiles", async () => {
+    await p.query("INSERT INTO auth.users(id, email) VALUES ('44444444-4444-4444-4444-444444444444','o@y.z') ON CONFLICT DO NOTHING");
+    const n = await as("authenticated", "55555555-5555-5555-5555-555555555555", async (c) => {
+      try { return (await c.query("SELECT count(*)::int n FROM profiles")).rows[0].n; } catch { return "denied"; }
+    });
+    expect(n === "denied" || n === 0).toBe(true);
   });
   it("anon cannot read draft products", async () => {
     await seedVariant(p, { onHand: 1 });
