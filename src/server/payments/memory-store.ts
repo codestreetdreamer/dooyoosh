@@ -11,6 +11,7 @@ import type { OrderStatus } from "@/contracts/orders";
 import type { CheckoutStatus } from "@/contracts/checkout";
 import type { AdjustStockInput, ConvertOrderInput, ConvertResult, InventoryService, ReleaseReason, ReserveLine, ReserveResult, TxLike } from "./types";
 import type { PaymentProviderName } from "./types";
+import type { OrderDetail, OrderListItem, OrderListQuery, PaymentRow, RefundRow, ShipmentRow } from "./store";
 import type { CheckoutRow, CommerceRepo, NewCheckout, OrderEventInput, OrderRow, ProviderTxn, ShippingMethodForCheckout, VariantForCheckout } from "./store";
 
 interface VariantState extends VariantForCheckout { stockOnHand: number; stockReserved: number }
@@ -22,17 +23,18 @@ export interface MemoryState {
   checkouts: Map<string, CheckoutRow>;
   reservations: Reservation[];
   orders: Map<string, OrderRow>;
-  orderEvents: (OrderEventInput & { orderId: string; at: Date })[];
+  orderEvents: (OrderEventInput & { orderId: string; at: Date; id?: string })[];
   movements: { variantId: string; delta: number; reason: string; orderId: string | null; note: string | null; actorId: string | null }[];
   paymentEvents: Map<string, { type: string; processed: boolean; error: string | null }>;
-  payments: Map<string, { orderId: string; provider: string; providerPaymentId: string; amountMinor: number; currency: string; status: string }>;
-  refunds: Map<string, { orderId: string; amountMinor: number; status: string; providerRefundId: string | null }>;
+  payments: Map<string, PaymentRow & { orderId: string }>;
+  refunds: Map<string, RefundRow>;
+  shipments: ShipmentRow[];
   providerTxns: Map<string, ProviderTxn>;
   seq: number;
 }
 
 function emptyState(): MemoryState {
-  return { variants: new Map(), shipping: new Map(), checkouts: new Map(), reservations: [], orders: new Map(), orderEvents: [], movements: [], paymentEvents: new Map(), payments: new Map(), refunds: new Map(), providerTxns: new Map(), seq: 0 };
+  return { variants: new Map(), shipping: new Map(), checkouts: new Map(), reservations: [], orders: new Map(), orderEvents: [], movements: [], paymentEvents: new Map(), payments: new Map(), refunds: new Map(), shipments: [], providerTxns: new Map(), seq: 0 };
 }
 
 export class MemoryStore implements CommerceRepo, InventoryService {
@@ -77,6 +79,7 @@ export class MemoryStore implements CommerceRepo, InventoryService {
       return v ? [{ ...v, available: v.stockOnHand - v.stockReserved }] : [];
     });
   }
+  async getVariantStock(id: string) { const v = this.s.variants.get(id)!; return { stockOnHand: v.stockOnHand, stockReserved: v.stockReserved }; }
   async getShippingMethod(methodId: string, country: string) {
     const m = this.s.shipping.get(methodId);
     if (!m) return null;
@@ -124,12 +127,53 @@ export class MemoryStore implements CommerceRepo, InventoryService {
     if (e) { e.processed = true; e.error = error; }
   }
   async upsertPayment(p: Parameters<CommerceRepo["upsertPayment"]>[0]) {
-    this.s.payments.set(`${p.provider}:${p.providerPaymentId}`, { orderId: p.orderId, provider: p.provider, providerPaymentId: p.providerPaymentId, amountMinor: p.amountMinor, currency: p.currency, status: p.status });
+    const k = `${p.provider}:${p.providerPaymentId}`;
+    const prev = this.s.payments.get(k);
+    this.s.payments.set(k, { id: prev?.id ?? randomUUID(), createdAt: prev?.createdAt ?? this.clock(), orderId: p.orderId, provider: p.provider, providerPaymentId: p.providerPaymentId, amountMinor: p.amountMinor, currency: p.currency, status: p.status });
   }
   async recordRefund(r: Parameters<CommerceRepo["recordRefund"]>[0]) {
     const prev = this.s.refunds.get(r.idempotencyKey);
-    if (prev && prev.status === "succeeded") return;
-    this.s.refunds.set(r.idempotencyKey, { orderId: r.orderId, amountMinor: r.amountMinor, status: r.status, providerRefundId: r.providerRefundId });
+    if (prev && prev.status === "succeeded") return prev;
+    const pay = this.s.payments.get(`${r.provider}:${r.providerPaymentId}`);
+    const row: RefundRow = { id: prev?.id ?? randomUUID(), paymentId: pay?.id ?? randomUUID(), orderId: r.orderId, amountMinor: r.amountMinor, reason: r.reason, providerRefundId: r.providerRefundId, status: r.status, idempotencyKey: r.idempotencyKey, createdAt: prev?.createdAt ?? this.clock() };
+    this.s.refunds.set(r.idempotencyKey, row);
+    return row;
+  }
+  async getRefundByIdempotencyKey(key: string) { return this.s.refunds.get(key) ?? null; }
+  async getOrderIdByReference(reference: string) { return [...this.s.orders.values()].find((o) => o.reference === reference)?.id ?? null; }
+  async getOrderDetail(orderId: string): Promise<OrderDetail | null> {
+    const o = this.s.orders.get(orderId);
+    if (!o) return null;
+    const c = this.s.checkouts.get(o.checkoutId)!;
+    const events = this.s.orderEvents.filter((e) => e.orderId === orderId);
+    return {
+      ...o, email: c.email, phone: c.phone, locale: c.locale, accessTokenHash: c.accessTokenHash, shippingAddress: c.shippingAddress, billingAddress: c.billingAddress,
+      shippingMethodId: c.shippingMethodId, subtotalMinor: c.subtotalMinor, shippingMinor: c.shippingMinor, taxMinor: c.taxMinor, discountMinor: c.discountMinor,
+      placedAt: events[0]?.at ?? c.createdAt, updatedAt: events.at(-1)?.at ?? c.createdAt,
+      payments: [...this.s.payments.values()].filter((p) => p.orderId === orderId),
+      refunds: [...this.s.refunds.values()].filter((r) => r.orderId === orderId),
+      shipments: this.s.shipments.filter((x) => x.orderId === orderId),
+      events: events.map((e) => ({ id: (e.id ??= randomUUID()), type: e.type, fromStatus: e.fromStatus, toStatus: e.toStatus, payload: e.payload, actorId: e.actorId, createdAt: e.at })),
+    };
+  }
+  async listOrders(q: OrderListQuery) {
+    const needle = q.q?.toLowerCase();
+    const all: OrderListItem[] = [];
+    for (const o of [...this.s.orders.values()].reverse()) {
+      const c = this.s.checkouts.get(o.checkoutId)!;
+      if (q.status && o.status !== q.status) continue;
+      if (needle && !o.reference.toLowerCase().includes(needle) && !c.email.toLowerCase().includes(needle)) continue;
+      const placedAt = this.s.orderEvents.find((e) => e.orderId === o.id)?.at ?? c.createdAt;
+      all.push({ id: o.id, reference: o.reference, email: c.email, status: o.status, currency: o.currency, totalMinor: o.totalMinor, itemCount: o.items.reduce((n, l) => n + l.quantity, 0), placedAt, paidAt: o.paidAt });
+    }
+    const off = q.cursor ? Number(q.cursor) || 0 : 0;
+    const items = all.slice(off, off + q.limit);
+    return { items, nextCursor: off + q.limit < all.length ? String(off + q.limit) : null };
+  }
+  async insertShipment(x: Omit<ShipmentRow, "id">) {
+    const row = { ...x, id: randomUUID() };
+    this.s.shipments.push(row);
+    return row;
   }
   async insertProviderTxn(t: Omit<ProviderTxn, "seq">) {
     const k = `${t.provider}:${t.providerTxnId}`;

@@ -8,6 +8,7 @@ export interface OrderNotifier {
   stockConflict(e: { orderId: string; reference: string; refund: "succeeded" | "manual_required" }): Promise<void>;
   orderRefunded(e: { orderId: string; reference: string; amountMinor: number; currency: string }): Promise<void>;
   /** staff alert: provider has no refund API, refund must be done in the provider cabinet */
+  orderShipped(e: { orderId: string; reference: string; carrier: string; trackingNumber: string | null; trackingUrl: string | null }): Promise<void>;
   manualRefundRequired(e: { orderId: string; reference: string; provider: string; instructions: string }): Promise<void>;
 }
 
@@ -15,5 +16,6 @@ export const logNotifier: OrderNotifier = {
   async orderPaid(e) { console.info("[notify] order paid", e.reference); },
   async stockConflict(e) { console.warn("[notify] stock conflict", e.reference, e.refund); },
   async orderRefunded(e) { console.info("[notify] order refunded", e.reference); },
+  async orderShipped(e) { console.info("[notify] order shipped", e.reference, e.carrier); },
   async manualRefundRequired(e) { console.error("[notify] MANUAL REFUND REQUIRED", e.reference, e.provider, e.instructions); },
 };

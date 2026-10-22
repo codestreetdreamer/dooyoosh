@@ -101,6 +101,33 @@ export interface OrderRow {
   paidAt: Date | null;
 }
 
+/** Full order read model for GET /orders/{reference} and the admin views (orders + items + payments + refunds + shipments + events). */
+export interface OrderDetail extends OrderRow {
+  email: string;
+  phone: string | null;
+  locale: string;
+  accessTokenHash: string;
+  shippingAddress: Address;
+  billingAddress: Address | null;
+  shippingMethodId: string;
+  subtotalMinor: number;
+  shippingMinor: number;
+  taxMinor: number;
+  discountMinor: number;
+  placedAt: Date;
+  updatedAt: Date;
+  payments: PaymentRow[];
+  refunds: RefundRow[];
+  shipments: ShipmentRow[];
+  events: OrderEventRow[];
+}
+export interface PaymentRow { id: string; provider: PaymentProviderName; providerPaymentId: string; amountMinor: number; currency: string; status: "succeeded" | "refunded" | "partially_refunded" | "failed" | "canceled"; createdAt: Date }
+export interface RefundRow { id: string; paymentId: string; orderId: string; amountMinor: number; reason: string | null; providerRefundId: string | null; status: "pending" | "succeeded" | "failed" | "canceled"; idempotencyKey: string; createdAt: Date }
+export interface ShipmentRow { id: string; orderId: string; carrier: string; trackingNumber: string | null; trackingUrl: string | null; status: "label_created" | "in_transit" | "delivered" | "exception"; shippedAt: Date | null; deliveredAt: Date | null }
+export interface OrderEventRow { id: string; type: string; fromStatus: OrderStatus | null; toStatus: OrderStatus | null; payload: unknown; actorId: string | null; createdAt: Date }
+export interface OrderListQuery { status?: OrderStatus; q?: string; cursor?: string; limit: number }
+export interface OrderListItem { id: string; reference: string; email: string; status: OrderStatus; currency: string; totalMinor: number; itemCount: number; placedAt: Date; paidAt: Date | null }
+
 export interface OrderEventInput {
   type: string;
   fromStatus: OrderStatus;
@@ -140,6 +167,8 @@ export interface CommerceRepo {
 
   // ---- reads of Backend-owned catalog/shipping data
   getVariantsForCheckout(variantIds: string[], locale: string): Promise<VariantForCheckout[]>;
+  /** admin only: exact counters (never exposed publicly) */
+  getVariantStock(variantId: string): Promise<{ stockOnHand: number; stockReserved: number }>;
   getShippingMethod(methodId: string, countryIso2: string): Promise<ShippingMethodForCheckout | null>;
 
   // ---- checkouts
@@ -158,12 +187,20 @@ export interface CommerceRepo {
   /** compare-and-set status + insert order_events in ONE transaction; false if current status != event.fromStatus */
   updateOrderStatus(orderId: string, event: OrderEventInput, now: Date): Promise<boolean>;
 
+  // ---- order reads / fulfilment (admin + guest order page)
+  getOrderDetail(orderId: string): Promise<OrderDetail | null>;
+  getOrderIdByReference(reference: string): Promise<string | null>;
+  /** newest first; cursor is opaque (memory: offset; pg: placed_at/id keyset) */
+  listOrders(q: OrderListQuery): Promise<{ items: OrderListItem[]; nextCursor: string | null }>;
+  insertShipment(s: Omit<ShipmentRow, "id">): Promise<ShipmentRow>;
+  getRefundByIdempotencyKey(key: string): Promise<RefundRow | null>;
+
   // ---- payments
   /** payment_events insert; on PK conflict returns the existing row's processed flag */
   recordPaymentEvent(provider: PaymentProviderName, eventId: string, type: string, payload: unknown): Promise<{ inserted: boolean; processed: boolean }>;
   markPaymentEventProcessed(provider: PaymentProviderName, eventId: string, error: string | null): Promise<void>;
-  upsertPayment(p: { orderId: string; provider: PaymentProviderName; providerPaymentId: string; amountMinor: number; currency: string; status: "succeeded" | "refunded" | "failed" | "canceled"; raw: unknown }): Promise<void>;
-  recordRefund(r: { orderId: string; provider: PaymentProviderName; providerPaymentId: string; amountMinor: number; reason: string; providerRefundId: string | null; status: "pending" | "succeeded"; idempotencyKey: string }): Promise<void>;
+  upsertPayment(p: { orderId: string; provider: PaymentProviderName; providerPaymentId: string; amountMinor: number; currency: string; status: PaymentRow["status"]; raw: unknown }): Promise<void>;
+  recordRefund(r: { orderId: string; provider: PaymentProviderName; providerPaymentId: string; amountMinor: number; reason: string; providerRefundId: string | null; status: "pending" | "succeeded"; idempotencyKey: string }): Promise<RefundRow>;
 
   // ---- provider transactions (Payme/Click)
   insertProviderTxn(t: Omit<ProviderTxn, "seq">): Promise<{ created: boolean; txn: ProviderTxn }>;

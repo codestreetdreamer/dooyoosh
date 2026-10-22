@@ -26,6 +26,7 @@ export function silentNotifier(): OrderNotifier & { calls: string[] } {
     async orderPaid(e) { calls.push(`paid:${e.reference}`); },
     async stockConflict(e) { calls.push(`conflict:${e.reference}:${e.refund}`); },
     async orderRefunded(e) { calls.push(`refunded:${e.reference}`); },
+    async orderShipped(e) { calls.push(`shipped:${e.reference}`); },
     async manualRefundRequired(e) { calls.push(`manual:${e.reference}`); },
   };
 }
