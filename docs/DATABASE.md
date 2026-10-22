@@ -21,10 +21,10 @@ Folder `src/server/db/migrations/`, journal `meta/_journal.json`. Apply **in thi
 | `0002_stock_order_functions.sql` | hand-written | stock/order SECURITY DEFINER functions (§4 below) |
 | `0003_rls_policies.sql` | hand-written | RLS on every table, grants, policies, `storefront_*` views, `variant_availability`, `product_facets` |
 | `0004_storage_media.sql` | hand-written | Storage bucket `product-images` + policies |
-| `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default; CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` (checkouts, orders); `checkouts.idempotency_payload_hash` (64-hex, required when `idempotency_key` set); `provider_transactions.seq` (bigint identity) + `provider_time` (bigint ms, nullable, index `(provider, provider_time)`, UNIQUE `(provider, seq)`); `refunds.idempotency_key` uuid → **text** (NOT NULL UNIQUE, 1..200). **Local only** |
-| `0006_convert_no_vat_fallback.sql` | hand-written (incremental) | `convert_checkout_to_order` modes `record`/`abort` (abort returns `aborted`, writes nothing), no 1200 VAT fallback; `reserve_checkout(…, p_payload_hash)`; `checkout_id_for_idempotency_key()`. **Local only** |
+| `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default; CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` (checkouts, orders); `checkouts.idempotency_payload_hash` (64-hex, required when `idempotency_key` set); `provider_transactions.seq` (bigint identity) + `provider_time` (bigint ms, nullable, index `(provider, provider_time)`, UNIQUE `(provider, seq)`); `refunds.idempotency_key` uuid → **text** (NOT NULL UNIQUE, 1..200). applied to staging after QA green |
+| `0006_convert_no_vat_fallback.sql` | hand-written (incremental) | `convert_checkout_to_order` modes `record`/`abort` (abort returns `aborted`, writes nothing), no 1200 VAT fallback; `reserve_checkout(…, p_payload_hash)`; `checkout_id_for_idempotency_key()`. applied to staging after QA green |
 
-Staging `bmigqxmswskihqrkeezh` currently has 0000–0004 (applied 2026-10-22). 0005/0006 go to staging only after QA gives green.
+Staging `bmigqxmswskihqrkeezh` has 0000–0006 (0000–0004 applied 2026-10-22 23:24, 0005/0006 at 23:47 UTC after QA green on a4e2c69). Later migrations go to staging only after QA green.
 
 Workflow:
 1. Edit `src/server/db/schema/*.ts` → `pnpm db:generate` (new numbered file). Hand-written SQL: `pnpm drizzle-kit generate --custom --name <name>`.
