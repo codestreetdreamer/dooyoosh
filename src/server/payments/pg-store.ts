@@ -263,7 +263,6 @@ export class PgStore implements CommerceRepo, InventoryService {
       values (${p.orderId}, ${p.provider}, ${p.providerPaymentId}, ${p.amountMinor}, ${p.currency}, ${p.status}, ${p.raw === undefined ? null : this.sql.json(p.raw as never)})
       on conflict (provider, provider_payment_id) do update set status = excluded.status, raw = coalesce(excluded.raw, payments.raw)`;
   }
-  // TODO(Backend 0009): insert r.orderId into refunds.order_id and read it directly (today derived via payments.order_id).
   async recordRefund(r: Parameters<CommerceRepo["recordRefund"]>[0]): Promise<RefundRow> {
     const [pay] = await this.sql`select id from payments where provider = ${r.provider} and provider_payment_id = ${r.providerPaymentId}`;
     if (!pay) throw new Error(`payment ${r.provider}:${r.providerPaymentId} not found for refund`);
