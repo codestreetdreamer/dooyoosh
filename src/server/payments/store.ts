@@ -1,34 +1,42 @@
 /**
- * Persistence port for checkout, orders and payments. Owner: Payments & Orders.
+ * Persistence port for checkout, orders and payments (Payments & Orders-owned tables only). Owner: Payments & Orders.
  *
- * App code NEVER writes stock columns itself (spec §12.5). Every stock-affecting method maps 1:1 to a
- * Backend & Database SECURITY DEFINER function (service_role only); exact params land in docs/DATABASE.md:
- *   reserveCheckout          -> reserve_checkout
- *   convertCheckoutToOrder   -> convert_checkout_to_order (idempotent; reports stock_conflict)
- *   releaseCheckout          -> release_checkout
- *   releaseExpired           -> release_expired_reservations
- *   restockOrder             -> adjust_stock (reason 'return' | 'cancellation')
- *   recordPaymentEvent       -> record_payment_event
- * `memory-store.ts` is an in-memory fake with the same semantics, used by unit tests until the Postgres
- * implementation (src/server/payments/pg-store.ts, TODO after DATABASE.md) exists.
+ * Stock is NOT here: every stock change goes through `InventoryService` (src/contracts/inventory.ts), implemented by
+ * Backend & Database in src/server/inventory/reservations.ts over the SECURITY DEFINER functions
+ * reserve_checkout / convert_checkout_to_order / release_checkout / release_expired_reservations / adjust_stock (spec §12.5).
+ *
+ * `memory-store.ts` implements this port AND a fake InventoryService with the same semantics, for unit tests and
+ * local demo until the Postgres implementation lands (TODO: pg-store.ts once docs/DATABASE.md is published).
  */
 import type { OrderStatus } from "@/contracts/orders";
 import type { CheckoutStatus, CheckoutSnapshotLine } from "@/contracts/checkout";
 import type { Address } from "@/contracts/common";
-import type { PaymentProviderName } from "./types";
+import type { PaymentProviderName, TxLike } from "./types";
 
-export interface VariantForCheckout {
+/** Fiscal fields (spec §13, ZRU-792). Snapshotted per line; nullable for DEMO- seed data, required in live mode. */
+export interface FiscalFields {
+  ikpuCode: string | null;
+  packageCode: string | null;
+  /** VAT in basis points, 1200 = 12% */
+  vatRateBp: number | null;
+}
+
+/** checkouts.items jsonb line = contract snapshot line + fiscal fields (PROPOSAL to Architect: add to contract). */
+export type CheckoutLine = CheckoutSnapshotLine & FiscalFields;
+
+export interface VariantForCheckout extends FiscalFields {
   variantId: string;
   sku: string;
   productName: string;
   size: string | null;
   colour: string | null;
-  /** variant.price_cents ?? product.base_price_cents, minor units */
+  /** variant.price_cents ?? product.base_price_cents (minor units) */
   unitPriceMinor: number;
   currency: string;
   isActive: boolean;
+  /** product published and not archived */
   isPublished: boolean;
-  /** stock_on_hand - stock_reserved (hint only; reserve_checkout is authoritative) */
+  /** on_hand - reserved > 0 hint (exact count never leaves the server); reserve_checkout is authoritative */
   available: number;
   weightGrams: number | null;
 }
@@ -42,10 +50,11 @@ export interface ShippingRateRow {
 
 export interface ShippingMethodForCheckout {
   methodId: string;
+  name: string;
   isActive: boolean;
   marketCurrency: string;
   marketActive: boolean;
-  /** countries.is_shippable for the destination and the country belongs to the method's market */
+  /** countries.is_shippable AND country.market_id = method.market_id */
   countryShippable: boolean;
   rates: ShippingRateRow[];
 }
@@ -53,14 +62,16 @@ export interface ShippingMethodForCheckout {
 export interface NewCheckout {
   id: string;
   idempotencyKey: string | null;
+  accessTokenHash: string;
   email: string;
   phone: string | null;
   locale: string;
   currency: string;
-  items: CheckoutSnapshotLine[];
+  items: CheckoutLine[];
   shippingAddress: Address;
   billingAddress: Address | null;
   shippingMethodId: string;
+  shippingName: string;
   subtotalMinor: number;
   shippingMinor: number;
   taxMinor: number;
@@ -69,7 +80,7 @@ export interface NewCheckout {
   provider: PaymentProviderName;
   /** provider session expiry (30 min) -> checkouts.expires_at */
   expiresAt: Date;
-  /** reservation expiry (35 min) -> stock_reservations.expires_at */
+  /** stock reservation expiry (35 min) -> stock_reservations.expires_at */
   reservedUntil: Date;
 }
 
@@ -79,10 +90,6 @@ export interface CheckoutRow extends NewCheckout {
   createdAt: Date;
 }
 
-export type ReserveResult =
-  | { ok: true; checkout: CheckoutRow; reused: boolean }
-  | { ok: false; outOfStockVariantIds: string[] };
-
 export interface OrderRow {
   id: string;
   reference: string;
@@ -90,28 +97,8 @@ export interface OrderRow {
   status: OrderStatus;
   totalMinor: number;
   currency: string;
+  items: CheckoutLine[];
   paidAt: Date | null;
-}
-
-export type ConvertResult =
-  | { kind: "created" | "existing"; order: OrderRow }
-  /** reservation was released/expired: order recorded as stock_conflict-candidate (pending_payment); caller transitions + refunds */
-  | { kind: "stock_conflict"; order: OrderRow }
-  /** conflictMode 'abort': nothing written, caller returns a provider error (Payme/Click) */
-  | { kind: "reservation_inactive" }
-  | { kind: "not_found" };
-
-export interface ConvertInput {
-  checkoutId: string;
-  reference: string;
-  accessTokenHash: string;
-  provider: PaymentProviderName;
-  providerPaymentId: string;
-  amountMinor: number;
-  currency: string;
-  /** 'record' (Stripe/mock style: money already taken) or 'abort' (Payme/Click: we can still refuse the payment) */
-  conflictMode: "record" | "abort";
-  now: Date;
 }
 
 export interface OrderEventInput {
@@ -122,20 +109,24 @@ export interface OrderEventInput {
   actorId: string | null;
 }
 
-/** Provider-side transaction state for providers that call us before an order exists (Payme, Click). */
+/**
+ * Provider-side transaction for merchant-callback providers that call us BEFORE an order exists (Payme, Click).
+ * SCHEMA REQUEST (Backend): table `provider_transactions` — see report.
+ */
 export interface ProviderTxn {
   provider: PaymentProviderName;
-  /** Payme transaction id / Click click_trans_id */
+  /** Payme params.id (24 chars) / Click click_trans_id */
   providerTxnId: string;
-  /** monotonically increasing integer: Click merchant_prepare_id / merchant_confirm_id, Payme `transaction` */
+  /** bigserial: Click merchant_prepare_id / merchant_confirm_id; Payme `transaction` (stringified) */
   seq: number;
   checkoutId: string;
   amountMinor: number;
   currency: string;
-  /** Payme states 1, 2, -1, -2 (developer.help.paycom.uz/metody-merchant-api/tipy-dannykh). Click: 1 prepared, 2 completed, -1 cancelled, -2 cancelled after complete. */
+  /** 1 created/prepared, 2 performed/completed, -1 cancelled, -2 cancelled after perform (Payme tipy-dannykh) */
   state: 1 | 2 | -1 | -2;
+  /** Payme cancel reason code (1..5, 10) */
   reason: number | null;
-  /** provider's own creation time (Payme params.time), ms */
+  /** provider's own creation time (Payme params.time, ms); GetStatement filters on it */
   providerTime: number;
   createTime: number;
   performTime: number;
@@ -144,42 +135,43 @@ export interface ProviderTxn {
   raw: Record<string, unknown>;
 }
 
-export interface CommerceStore {
-  // ---- catalog / shipping reads (Backend-owned data, read-only here)
+export interface CommerceRepo {
+  runInTransaction<T>(fn: (tx: TxLike) => Promise<T>): Promise<T>;
+
+  // ---- reads of Backend-owned catalog/shipping data
   getVariantsForCheckout(variantIds: string[], locale: string): Promise<VariantForCheckout[]>;
   getShippingMethod(methodId: string, countryIso2: string): Promise<ShippingMethodForCheckout | null>;
 
-  // ---- checkout + stock (DB functions)
-  reserveCheckout(input: NewCheckout): Promise<ReserveResult>;
+  // ---- checkouts
+  insertCheckout(c: NewCheckout, tx?: TxLike): Promise<void>;
   getCheckout(checkoutId: string): Promise<CheckoutRow | null>;
-  setProviderSession(checkoutId: string, provider: PaymentProviderName, sessionId: string): Promise<void>;
-  /** true if every reservation of the checkout is 'active' and not past expires_at */
+  getCheckoutByIdempotencyKey(key: string): Promise<CheckoutRow | null>;
+  setProviderSession(checkoutId: string, sessionId: string): Promise<void>;
+  setCheckoutStatus(checkoutId: string, status: CheckoutStatus): Promise<void>;
+  listExpiredCheckouts(now: Date, limit: number): Promise<CheckoutRow[]>;
+  /** read-only: every stock_reservations row for the checkout is 'active' AND expires_at > now */
   isReservationActive(checkoutId: string, now: Date): Promise<boolean>;
-  releaseCheckout(checkoutId: string, status: "expired" | "failed"): Promise<void>;
-  releaseExpired(now: Date): Promise<number>;
-  convertCheckoutToOrder(input: ConvertInput): Promise<ConvertResult>;
-  restockOrder(orderId: string, reason: "return" | "cancellation", note: string): Promise<void>;
 
   // ---- orders
   getOrder(orderId: string): Promise<OrderRow | null>;
   getOrderByCheckout(checkoutId: string): Promise<OrderRow | null>;
-  /** compare-and-set status + insert order_events row in one transaction. false if status != from. */
+  /** compare-and-set status + insert order_events in ONE transaction; false if current status != event.fromStatus */
   updateOrderStatus(orderId: string, event: OrderEventInput, now: Date): Promise<boolean>;
 
   // ---- payments
-  /** insert into payment_events; 'duplicate' on PK(provider,event_id) conflict */
-  recordPaymentEvent(provider: PaymentProviderName, eventId: string, type: string, payload: unknown): Promise<"inserted" | "duplicate">;
+  /** payment_events insert; on PK conflict returns the existing row's processed flag */
+  recordPaymentEvent(provider: PaymentProviderName, eventId: string, type: string, payload: unknown): Promise<{ inserted: boolean; processed: boolean }>;
   markPaymentEventProcessed(provider: PaymentProviderName, eventId: string, error: string | null): Promise<void>;
-  upsertPayment(p: { orderId: string; provider: PaymentProviderName; providerPaymentId: string; amountMinor: number; currency: string; status: "succeeded" | "refunded" | "failed"; raw: unknown }): Promise<{ paymentId: string }>;
-  recordRefund(r: { providerPaymentId: string; provider: PaymentProviderName; amountMinor: number; reason: string; providerRefundId: string | null; status: "pending" | "succeeded" }): Promise<void>;
+  upsertPayment(p: { orderId: string; provider: PaymentProviderName; providerPaymentId: string; amountMinor: number; currency: string; status: "succeeded" | "refunded" | "failed" | "canceled"; raw: unknown }): Promise<void>;
+  recordRefund(r: { orderId: string; provider: PaymentProviderName; providerPaymentId: string; amountMinor: number; reason: string; providerRefundId: string | null; status: "pending" | "succeeded"; idempotencyKey: string }): Promise<void>;
 
-  // ---- provider transactions (SCHEMA REQUEST: table provider_transactions, see report)
+  // ---- provider transactions (Payme/Click)
   insertProviderTxn(t: Omit<ProviderTxn, "seq">): Promise<{ created: boolean; txn: ProviderTxn }>;
   getProviderTxn(provider: PaymentProviderName, providerTxnId: string): Promise<ProviderTxn | null>;
   getProviderTxnBySeq(provider: PaymentProviderName, seq: number): Promise<ProviderTxn | null>;
-  /** transactions for a checkout in state 1 or 2 */
+  /** transactions of the checkout in state 1 or 2 */
   findOpenProviderTxns(provider: PaymentProviderName, checkoutId: string): Promise<ProviderTxn[]>;
-  /** compare-and-set on state; returns updated row or null if state changed underneath */
+  /** compare-and-set on state; null if the state changed underneath (concurrent retry) */
   updateProviderTxn(provider: PaymentProviderName, providerTxnId: string, expectedState: ProviderTxn["state"], patch: Partial<ProviderTxn>): Promise<ProviderTxn | null>;
   listProviderTxns(provider: PaymentProviderName, fromProviderTime: number, toProviderTime: number): Promise<ProviderTxn[]>;
 }

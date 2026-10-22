@@ -10,10 +10,7 @@
  *  - Click has no separate sandbox host (docs.click.uz/testing/postman): in sandbox mode the customer is sent to our
  *    mock pay page, and Prepare/Complete are exercised with Click's Postman collection / playground.
  */
-import type { PaymentProviderName } from "./types";
-
-/** sandbox = test credentials / test hosts only, no real money. live = real money. */
-export type PaymentMode = "sandbox" | "live";
+import type { PaymentMode, PaymentProviderName } from "./types";
 
 const PROVIDERS: readonly PaymentProviderName[] = ["mock", "stripe", "payme", "click"];
 
