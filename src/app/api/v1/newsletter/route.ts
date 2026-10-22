@@ -6,7 +6,7 @@ import { newsletterSignupRequest, newsletterSignupResponse } from "@/contracts/j
 import { withErrors } from "@/lib/errors";
 import { CACHE_NONE, parseBody, respond } from "@/server/catalog/http";
 import { signup } from "@/server/journal/newsletter";
-import { clientIp, rateLimit } from "@/server/journal/rate-limit";
+import { clientIp, newsletterAllowed } from "@/server/journal/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +16,7 @@ export const POST = withErrors(async (req: Request) => {
   const raw = await req.clone().json().catch(() => null) as { website?: unknown } | null;
   const honeypot = typeof raw?.website === "string" && raw.website.length > 0;
   const body = honeypot ? null : await parseBody(newsletterSignupRequest, req);
-  const allowed = rateLimit(`newsletter:ip:${clientIp(req.headers)}`, 10, 10 * 60_000)
-    && (!body || rateLimit(`newsletter:email:${body.email}`, 3, 60 * 60_000));
-  if (body && allowed) await signup(body.email, body.locale);
+  // DB-backed limit (0008): per trusted IP 10/10 min + per email 3/h; over the limit => same 202, nothing written
+  if (body && (await newsletterAllowed(clientIp(req.headers), body.email))) await signup(body.email, body.locale);
   return respond(newsletterSignupResponse, ACCEPTED, { status: 202, cache: CACHE_NONE });
 });

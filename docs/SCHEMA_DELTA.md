@@ -64,3 +64,4 @@ Numbered B18–B22 because B17 above is already used (checkouts.idempotency_key)
 - B26 `refunds.idempotency_key` uuid → text NOT NULL UNIQUE (1..200). ✅ 0005
 - B27 convert conflict modes `record` (default) | `abort`; abort returns `aborted` and writes nothing. ✅ 0006
 - B28 `checkouts.idempotency_payload_hash` + `IDEMPOTENCY_CONFLICT` (reserve_checkout p_payload_hash, `checkout_id_for_idempotency_key`). ✅ 0005/0006 — needs an ERROR_CODES entry (409) from the Architect.
+- B29 `newsletter_attempts` (hashed ip/email, RLS on, no API-role grants) + `newsletter_attempt()` (prune >24h + insert + count, service_role) replacing the in-memory newsletter limiter; IP only from `TRUSTED_IP_HEADER`. ⏳ 0008 local only

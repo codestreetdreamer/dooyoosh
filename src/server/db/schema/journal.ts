@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { bigint, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { check } from "drizzle-orm/pg-core";
 import { tsvector } from "./_types";
@@ -71,4 +71,19 @@ export const newsletterSubscribers = pgTable("newsletter_subscribers", {
   check("newsletter_email_lower", sql`${t.email} = lower(${t.email})`),
   check("newsletter_locale_chk", localeCheck(t.locale)),
   index("newsletter_confirm_token_idx").on(t.confirmTokenHash),
+]);
+
+// 0008: DB-backed newsletter rate limit (QA P3). Only hashes are stored (HMAC/sha256 of IP and email), pruned after 24h.
+// RLS on, no API-role access; written/counted only by public.newsletter_attempt() (service_role).
+export const newsletterAttempts = pgTable("newsletter_attempts", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  ipHash: text("ip_hash"),
+  emailHash: text("email_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  check("newsletter_attempts_ip_hash_fmt", sql`${t.ipHash} IS NULL OR ${t.ipHash} ~ '^[0-9a-f]{64}$'`),
+  check("newsletter_attempts_email_hash_fmt", sql`${t.emailHash} ~ '^[0-9a-f]{64}$'`),
+  index("newsletter_attempts_ip_idx").on(t.ipHash, t.createdAt),
+  index("newsletter_attempts_email_idx").on(t.emailHash, t.createdAt),
+  index("newsletter_attempts_created_idx").on(t.createdAt),
 ]);

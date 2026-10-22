@@ -64,7 +64,7 @@ declare
   c uuid := (select id from public.product_variants where sku = 'FT-C');
   d uuid := (select id from public.product_variants where sku = 'FT-D');
   co1 uuid; co2 uuid; co3 uuid; co4 uuid; co5 uuid;
-  res jsonb; res2 jsonb; res3 jsonb; det text; n int; s record; tot bigint;
+  res jsonb; res2 jsonb; res3 jsonb; det text; i int; n int; s record; tot bigint;
 begin
   -- 1. reserve: happy path + reserved_until
   co1 := pg_temp.mk_checkout(jsonb_build_array(jsonb_build_object('variant_id', a, 'quantity', 2),
@@ -250,6 +250,19 @@ begin
     '00000000-0000-4000-8000-0000000012aa', repeat('2', 64)), 'IDEMPOTENCY_CONFLICT');
   det := pg_temp.expect_error(format('select public.reserve_checkout(%L, %L, now() + interval ''35 min'', %L)', co4,
     jsonb_build_array(jsonb_build_object('variant_id', d, 'quantity', 1)), repeat('2', 64)), 'IDEMPOTENCY_CONFLICT');
+  -- 13. newsletter_attempt (0008): per-email and per-IP windows, prune > 24h
+  insert into public.newsletter_attempts (email_hash, created_at) values (repeat('9', 64), now() - interval '25 hours');
+  for i in 1..3 loop
+    if not public.newsletter_attempt(null, repeat('e', 64)) then raise exception 'FAIL 13: email attempt % refused', i; end if;
+  end loop;
+  if public.newsletter_attempt(null, repeat('e', 64)) then raise exception 'FAIL 13: 4th email attempt allowed'; end if;
+  if exists (select 1 from public.newsletter_attempts where email_hash = repeat('9', 64)) then raise exception 'FAIL 13: no prune'; end if;
+  for i in 1..10 loop
+    if not public.newsletter_attempt(repeat('a', 64), lpad(to_hex(i), 64, '0')) then raise exception 'FAIL 13: ip attempt % refused', i; end if;
+  end loop;
+  if public.newsletter_attempt(repeat('a', 64), lpad(to_hex(99), 64, '0')) then raise exception 'FAIL 13: 11th ip attempt allowed'; end if;
+  det := pg_temp.expect_error('select public.newsletter_attempt(null, ''plain@email'')', 'VALIDATION_ERROR');
+  raise notice 'PASS 13 newsletter_attempt: email 3/h, ip 10/10min, prune >24h, hashes only';
   raise notice 'PASS 12 idempotency payload hash: lookup + IDEMPOTENCY_CONFLICT on reserve and lookup';
   raise notice 'PASS 11 IKPU format ^(DEMO-)?[0-9]{17}$, publish requires ikpu + published_at, ikpu_is_demo flag';
 end $$;

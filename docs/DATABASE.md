@@ -24,6 +24,7 @@ Folder `src/server/db/migrations/`, journal `meta/_journal.json`. Apply **in thi
 | `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default; CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` (checkouts, orders); `checkouts.idempotency_payload_hash` (64-hex, required when `idempotency_key` set); `provider_transactions.seq` (bigint identity) + `provider_time` (bigint ms, nullable, index `(provider, provider_time)`, UNIQUE `(provider, seq)`); `refunds.idempotency_key` uuid → **text** (NOT NULL UNIQUE, 1..200). applied to staging after QA green |
 | `0006_convert_no_vat_fallback.sql` | hand-written (incremental) | `convert_checkout_to_order` modes `record`/`abort` (abort returns `aborted`, writes nothing), no 1200 VAT fallback; `reserve_checkout(…, p_payload_hash)`; `checkout_id_for_idempotency_key()`. applied to staging after QA green |
 | `0007_storage_no_public_list.sql` | hand-written (incremental) | QA P3: drops the anon/authenticated SELECT policy on `storage.objects` for `product-images` (no public listing); adds owner/editor-only SELECT (admin media library). Public URL downloads unaffected. Applied to staging after QA green |
+| `0008_newsletter_attempts.sql` | generated + hand-written | QA P3: DB-backed newsletter rate limit. Table `newsletter_attempts` (`ip_hash` nullable, `email_hash`, 64-hex CHECKs, `created_at`), RLS on, no grants to anon/authenticated/service_role; `newsletter_attempt(ip_hash, email_hash, ip_limit=10, ip_window=10min, email_limit=3, email_window=1h) → boolean` (SECURITY DEFINER, service_role only): advisory-locks per email/IP, prunes rows > 24h, inserts, counts. **LOCAL ONLY until QA green** |
 
 Staging `bmigqxmswskihqrkeezh` has 0000–0007 (0000–0004 applied 2026-10-22 23:24, 0005/0006 at 23:47 UTC after QA green on a4e2c69, 0007 at 23:51 UTC after QA green on 5dc4fc8). Later migrations go to staging only after QA green.
 
@@ -149,9 +150,16 @@ column grants (no stock counts) and the `security_invoker` views apply exactly a
 | `GET /articles`, `GET /articles/{slug}` | `journal/articles.ts` | published + `published_at <= now()`; tags; shoppable products; keyset cursor |
 | `POST /cart/validate` | `catalog/cart.ts` | public facts as anon; stock facts computed by the server role **as booleans inside SQL** (`in_stock`, enough-for-requested-qty, `lowStock` = sellable ≤ 3) — no count ever leaves the DB. Quantities 1..`MAX_LINE_QTY` (10) per contract. Over-stock request keeps its quantity and gets `insufficient_stock` (never clamped). Issues `out_of_stock / insufficient_stock / inactive / unpublished / not_found`. Residual: a client can binary-search the count by repeating requests with different quantities (≤ 10) — accepted trade-off (same as any shop's "only N left" UX). |
 | `GET /shipping/options` | `catalog/shipping-options.ts` | 422 `COUNTRY_NOT_SHIPPABLE`; rate tier by `subtotalMinor` hint; price 0 when hint ≥ freeOver |
-| `POST /newsletter`, `GET /newsletter/confirm` | `journal/newsletter.ts` | always 202; honeypot + per-IP (10/10 min) and per-email (3/h) in-memory limits; upsert is idempotent; confirm token stored as sha256 hex, 7-day TTL. **Confirmation email not sent yet** (hook `onToken` for Payments' email module) |
+| `POST /newsletter`, `GET /newsletter/confirm` | `journal/newsletter.ts` | always 202; honeypot + DB-backed limits (0008, `journal/rate-limit.ts`): per trusted IP 10/10 min and per email 3/h, over-limit = same 202 with no write; upsert is idempotent; confirm token stored as sha256 hex, 7-day TTL. **Confirmation email not sent yet** (hook `onToken` for Payments' email module) |
 Integration test: `src/server/db/tests/api_smoke.sh` (82 curl checks incl. 400/404/422) against `next dev` + a local DB from `apply-local.sh`.
 Env for the routes: `DATABASE_URL` (server), `NEXT_PUBLIC_SUPABASE_URL` (image URLs), plus whatever `serverEnv()` requires.
+
+### Newsletter rate-limit env (optional; Architect owns `.env.example`)
+| Var | Default | Meaning |
+|---|---|---|
+| `TRUSTED_IP_HEADER` | `x-vercel-forwarded-for` | the only header trusted for the client IP (first comma-separated hop). Fallback `x-real-ip` **only when `VERCEL=1`**. No trusted IP ⇒ per-email limit only (spoofable headers never pick the key). |
+| `NEWSLETTER_HASH_SECRET` | unset | HMAC-SHA256 key for `ip_hash`/`email_hash` (recommended in prod, ≥32 random bytes). Unset ⇒ domain-separated sha256 (`dooyoosh:newsletter:{ip|email}:value`). Separate from `ORDER_TOKEN_SECRET` on purpose. |
+| `VERCEL` | set by Vercel | enables the `x-real-ip` fallback |
 
 ## 9. Owner actions (Supabase dashboard, not migrations)
 - **Disable public sign-ups**: Authentication → Sign In / Providers → turn off "Allow new users to sign up" (admins are invited/created by the owner; customers check out as guests). Not expressible as a migration.

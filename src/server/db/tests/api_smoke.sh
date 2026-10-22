@@ -5,8 +5,8 @@
 set -uo pipefail
 BASE=${BASE:-http://localhost:3107}/api/v1
 pass=0; fail=0
-# fresh client IP per run (newsletter rate limit is per IP, in memory)
-IPH="x-real-ip: 10.$((RANDOM%250)).$((RANDOM%250)).$((RANDOM%250))"
+# fresh client IP per run (newsletter rate limit: per trusted IP header + per email, DB-backed)
+IPH="x-vercel-forwarded-for: 10.$((RANDOM%250)).$((RANDOM%250)).$((RANDOM%250))"
 psqlq() { psql -X -At -v ON_ERROR_STOP=1 -c "$1"; }
 # check NAME EXPECTED_STATUS JQ_ASSERTION METHOD URL [BODY] [CONTENT_TYPE]
 check() {
@@ -134,6 +134,14 @@ check "newsletter confirm 400"       400 '.error.code=="VALIDATION_ERROR"' GET "
 RUNID=$RANDOM$RANDOM
 for i in $(seq 1 12); do curl -s -o /dev/null -X POST -H "$IPH" -H 'content-type: application/json' --data "{\"email\":\"rl$RUNID-$i@example.com\"}" "$BASE/newsletter"; done
 [[ $(psqlq "select count(*) from newsletter_subscribers where email like 'rl$RUNID-%@example.com'") -lt 12 ]] && { pass=$((pass+1)); echo "PASS newsletter rate limit (writes capped, still 202)"; } || { fail=$((fail+1)); echo "FAIL rate limit"; }
+
+# per-email limit without any trusted IP header (spoofed x-real-ip is ignored off-Vercel): 3/h, 4th attempt does not rotate the token
+EM2="limit-$RUNID@example.com"
+for i in 1 2 3; do curl -s -o /dev/null -X POST -H "x-real-ip: 1.2.3.$i" -H 'content-type: application/json' --data "{\"email\":\"$EM2\"}" "$BASE/newsletter"; done
+H3=$(psqlq "select confirm_token_hash from newsletter_subscribers where email='$EM2'")
+check "newsletter 4th attempt still 202" 202 '.data.status=="pending_confirmation"' POST "/newsletter" "{\"email\":\"$EM2\"}"
+[[ -n $H3 && $(psqlq "select confirm_token_hash from newsletter_subscribers where email='$EM2'") == "$H3" ]] && { pass=$((pass+1)); echo "PASS per-email limit (no trusted IP): 4th attempt ignored"; } || { fail=$((fail+1)); echo "FAIL per-email limit"; }
+[[ $(psqlq "select count(*) from newsletter_attempts where email_hash !~ '^[0-9a-f]{64}$' or ip_hash !~ '^[0-9a-f]{64}$'") == 0 ]] && { pass=$((pass+1)); echo "PASS newsletter_attempts stores hashes only"; } || { fail=$((fail+1)); echo "FAIL attempts not hashed"; }
 
 echo "API SMOKE: $pass passed, $fail failed"
 [[ $fail == 0 ]]
