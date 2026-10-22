@@ -61,6 +61,8 @@ export const products = pgTable("products", {
   check("products_published_requires_ikpu", sql`${t.status} <> 'published' OR ${t.ikpuCode} IS NOT NULL`),
   check("products_published_requires_published_at", sql`${t.status} <> 'published' OR ${t.publishedAt} IS NOT NULL`),
   check("products_currency_fmt", currencyCheck(t.currency)),
+  // 'facets' is a reserved path segment: GET /api/v1/products/facets
+  check("products_slug_not_reserved", sql`${t.slug} <> 'facets'`),
   index("products_category_status_idx").on(t.categoryId, t.status),
   index("products_published_at_idx").on(t.publishedAt),
   index("products_size_chart_idx").on(t.sizeChartId),

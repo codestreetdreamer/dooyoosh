@@ -195,3 +195,29 @@ export const paymentEvents = pgTable("payment_events", {
   processedAt: timestamp("processed_at", { withTimezone: true }),
   error: text("error"),
 }, (t) => [primaryKey({ columns: [t.provider, t.eventId] })]);
+
+// B18 (Payments): Payme/Click transactions exist before our order (CreateTransaction -> PerformTransaction).
+// Mirrors ProviderTransaction in src/contracts/payments.ts. RLS on, server (service_role) only.
+export const providerTxnState = pgEnum("provider_txn_state", ["created", "performed", "canceled", "canceled_after_perform"]);
+export const providerTransactions = pgTable("provider_transactions", {
+  id: id(),
+  provider: paymentProvider("provider").notNull(),
+  providerTxnId: text("provider_txn_id").notNull(),
+  checkoutId: uuid("checkout_id").notNull().references(() => checkouts.id, { onDelete: "restrict" }),
+  orderId: uuid("order_id").references(() => orders.id, { onDelete: "restrict" }),
+  state: providerTxnState("state").notNull().default("created"),
+  amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+  currency: char("currency", { length: 3 }).notNull(),
+  cancelReason: integer("cancel_reason"),
+  raw: jsonb("raw"),
+  createdAt: createdAt(),
+  performedAt: timestamp("performed_at", { withTimezone: true }),
+  canceledAt: timestamp("canceled_at", { withTimezone: true }),
+  updatedAt: updatedAt(),
+}, (t) => [
+  unique("provider_transactions_provider_txn_uq").on(t.provider, t.providerTxnId),
+  check("provider_transactions_amount_nonneg", sql`${t.amountCents} >= 0`),
+  check("provider_transactions_currency_fmt", currencyCheck(t.currency)),
+  index("provider_transactions_checkout_idx").on(t.checkoutId),
+  index("provider_transactions_order_idx").on(t.orderId),
+]);

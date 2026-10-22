@@ -45,3 +45,13 @@ Update 01:03: Backend & Database regenerated `0000_init.sql` (29 tables, DB is e
 - Supabase `dooyoosh` (eu-central-1) is DEV/STAGING only (§12.7); do not load real customer data until the UZ data-localisation question is answered.
 - Spec §1 says Postgres 16; the Supabase project runs Postgres 17 — Architect will update §1 (no schema impact).
 - `DATABASE_URL` / service-role key are not in env yet, so nothing can be migrated against Supabase; test against QA's embedded Postgres (`tests/db`).
+
+## D. Payments & Orders requests (appended by Backend & Database, 2026-10-22, at Architect's request)
+Numbered B18–B22 because B17 above is already used (checkouts.idempotency_key).
+| # | Change | Why | Status |
+|---|---|---|---|
+| B18 | New table `provider_transactions` (id, provider, provider_txn_id, checkout_id NOT NULL, order_id NULL, state enum[created,performed,canceled,canceled_after_perform], amount_cents bigint, currency, cancel_reason int, raw jsonb, created_at, performed_at, canceled_at, updated_at), UNIQUE(provider, provider_txn_id); RLS on, no anon/authenticated access | Payme/Click create a transaction before our order exists; mirrors `ProviderTransaction` in `src/contracts/payments.ts` | ✅ feat/db (0000) |
+| B19 | `convert_checkout_to_order` writes `order_events` (`payment_received` / `stock_conflict`) and copies `checkouts.access_token_hash` → `orders.access_token_hash` | Order history + guest status token | ✅ feat/db (0002) |
+| B20 | `convert_checkout_to_order(p_checkout_id, p_order, p_conflict_mode text default 'mark')`; `'abort'` raises `STOCK_CONFLICT` (DETAIL = variant ids) and rolls back instead of creating a `stock_conflict` order | Payme Perform / Click Complete can refuse before money is captured | ✅ feat/db (0002) |
+| B21 | `adjust_stock(..., p_actor_id uuid)` accepts NULL actor (system/cron/provider callback) | System adjustments | ✅ feat/db (0002) |
+| B22 | Fiscal fields (`ikpu_code`, `package_code`, `vat_rate_bp`) exposed in `storefront_variants`; convert prefers snapshot `ikpuCode/packageCode/vatRateBp` (contract `CheckoutSnapshotLine`), falling back to `products` | ZRU-792 fiscal receipts | ✅ feat/db (0003/0002) |

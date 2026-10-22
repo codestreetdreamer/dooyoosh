@@ -52,7 +52,7 @@ do $$
 declare f text; r text;
 begin
   foreach f in array array[
-    'public.reserve_checkout(uuid,jsonb,timestamptz)', 'public.convert_checkout_to_order(uuid,jsonb)',
+    'public.reserve_checkout(uuid,jsonb,timestamptz)', 'public.convert_checkout_to_order(uuid,jsonb,text)',
     'public.release_checkout(uuid,text)', 'public.release_expired_reservations(timestamptz,integer)',
     'public.adjust_stock(uuid,integer,public.inventory_movement_reason,text,uuid)',
     'public.restock_order(uuid,public.inventory_movement_reason,uuid,text)',
@@ -113,10 +113,10 @@ begin
   if n <> 1 then raise exception 'FAIL: anon sees inactive category'; end if;
   select count(*) into n from public.articles where slug like 'rlstest-%';
   if n <> 1 then raise exception 'FAIL: anon sees % rlstest articles (expected 1)', n; end if;
-  select count(*) into n from public.product_facets('rlstest-cat') where facet = 'size' and value = 'M' and product_count = 1;
-  if n <> 1 then raise exception 'FAIL: product_facets'; end if;
-  select count(*) into n from public.product_facets('rlstest-cat') where value = 'L';
-  if n <> 0 then raise exception 'FAIL: product_facets counts inactive variant'; end if;
+  if public.product_facets('rlstest-cat') -> 'sizes' <> '[{"count": 1, "label": "M", "value": "M", "sizeSystem": "alpha"}]'::jsonb
+     or (public.product_facets('rlstest-cat') -> 'priceMinor' ->> 'min')::bigint <> 10000000 then
+    raise exception 'FAIL: product_facets %', public.product_facets('rlstest-cat');
+  end if;
   select count(*) into n from public.markets where code = 'RLSTEST';
   if n <> 1 then raise exception 'FAIL: anon cannot read active market'; end if;
 
@@ -124,7 +124,7 @@ begin
   exception when insufficient_privilege then null; end;
   foreach t in array array['checkouts','orders','order_items','order_events','payments','refunds','shipments',
                             'payment_events','stock_reservations','inventory_movements','audit_log','admin_users',
-                            'profiles','newsletter_subscribers'] loop
+                            'profiles','newsletter_subscribers','provider_transactions'] loop
     begin execute format('select count(*) from public.%I', t); raise exception 'FAIL: anon can select %', t;
     exception when insufficient_privilege then null; end;
   end loop;

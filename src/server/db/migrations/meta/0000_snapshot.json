@@ -1,5 +1,5 @@
 {
-  "id": "ce7d772c-cf6c-4628-9e08-4b505765bb2b",
+  "id": "c2a97b47-eed3-41da-963b-e69dcb9fe547",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -820,6 +820,10 @@
         "products_currency_fmt": {
           "name": "products_currency_fmt",
           "value": "\"products\".\"currency\" ~ '^[A-Z]{3}$'"
+        },
+        "products_slug_not_reserved": {
+          "name": "products_slug_not_reserved",
+          "value": "\"products\".\"slug\" <> 'facets'"
         }
       },
       "isRLSEnabled": false
@@ -2437,6 +2441,185 @@
       },
       "isRLSEnabled": false
     },
+    "public.provider_transactions": {
+      "name": "provider_transactions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "provider": {
+          "name": "provider",
+          "type": "payment_provider",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_txn_id": {
+          "name": "provider_txn_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "checkout_id": {
+          "name": "checkout_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "provider_txn_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'created'"
+        },
+        "amount_cents": {
+          "name": "amount_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "char(3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cancel_reason": {
+          "name": "cancel_reason",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw": {
+          "name": "raw",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "performed_at": {
+          "name": "performed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "canceled_at": {
+          "name": "canceled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "provider_transactions_checkout_idx": {
+          "name": "provider_transactions_checkout_idx",
+          "columns": [
+            {
+              "expression": "checkout_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "provider_transactions_order_idx": {
+          "name": "provider_transactions_order_idx",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "provider_transactions_checkout_id_checkouts_id_fk": {
+          "name": "provider_transactions_checkout_id_checkouts_id_fk",
+          "tableFrom": "provider_transactions",
+          "tableTo": "checkouts",
+          "columnsFrom": [
+            "checkout_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "provider_transactions_order_id_orders_id_fk": {
+          "name": "provider_transactions_order_id_orders_id_fk",
+          "tableFrom": "provider_transactions",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "provider_transactions_provider_txn_uq": {
+          "name": "provider_transactions_provider_txn_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "provider",
+            "provider_txn_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "provider_transactions_amount_nonneg": {
+          "name": "provider_transactions_amount_nonneg",
+          "value": "\"provider_transactions\".\"amount_cents\" >= 0"
+        },
+        "provider_transactions_currency_fmt": {
+          "name": "provider_transactions_currency_fmt",
+          "value": "\"provider_transactions\".\"currency\" ~ '^[A-Z]{3}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.refunds": {
       "name": "refunds",
       "schema": "",
@@ -3465,6 +3648,16 @@
         "canceled",
         "refunded",
         "partially_refunded"
+      ]
+    },
+    "public.provider_txn_state": {
+      "name": "provider_txn_state",
+      "schema": "public",
+      "values": [
+        "created",
+        "performed",
+        "canceled",
+        "canceled_after_perform"
       ]
     },
     "public.refund_status": {

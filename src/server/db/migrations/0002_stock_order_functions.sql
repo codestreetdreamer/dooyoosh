@@ -201,8 +201,11 @@ end $$;
 --   THIS checkout is still 'active'. Otherwise -> stock_conflict, no stock touched (never a CHECK violation).
 --   Idempotent: a second call returns status 'already_converted' and changes nothing.
 --   Raises AMOUNT_MISMATCH if amount/currency differ from checkouts.total_cents/currency (no order created).
+--   p_conflict_mode: 'mark' (default) = create the order as stock_conflict (money was taken -> refund);
+--                    'abort' = RAISE 'STOCK_CONFLICT' (DETAIL = json array of variant ids), everything rolls back
+--                    (Payme PerformTransaction / Click Complete can then answer with an error and not take money).
 -- ---------------------------------------------------------------------------
-create or replace function public.convert_checkout_to_order(p_checkout_id uuid, p_order jsonb)
+create or replace function public.convert_checkout_to_order(p_checkout_id uuid, p_order jsonb, p_conflict_mode text default 'mark')
 returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -219,6 +222,9 @@ declare
   v_n_res int;
   r record;
 begin
+  if p_conflict_mode is null or p_conflict_mode not in ('mark', 'abort') then
+    perform app_private.raise_app_error('VALIDATION_ERROR', jsonb_build_object('field', 'conflict_mode'));
+  end if;
   select * into v_c from public.checkouts where id = p_checkout_id for update;
   if not found then
     perform app_private.raise_app_error('NOT_FOUND', jsonb_build_object('checkout_id', p_checkout_id));
@@ -277,10 +283,12 @@ begin
   -- order_items: snapshot from checkout + fiscal fields (IKPU, package code, VAT) from products at convert time
   insert into public.order_items (order_id, variant_id, sku, product_name, size, colour, ikpu_code, package_code,
                                   vat_rate_bp, unit_price_cents, quantity, line_total_cents)
-  select v_order_id, s."variantId", s.sku, s."productName", s.size, s.colour, p.ikpu_code, p.package_code,
-         coalesce(p.vat_rate_bp, 1200), s."unitPriceMinor", s.quantity, s."unitPriceMinor" * s.quantity
+  select v_order_id, s."variantId", s.sku, s."productName", s.size, s.colour,
+         coalesce(s."ikpuCode", p.ikpu_code), coalesce(s."packageCode", p.package_code),
+         coalesce(s."vatRateBp", p.vat_rate_bp, 1200), s."unitPriceMinor", s.quantity, s."unitPriceMinor" * s.quantity
     from jsonb_to_recordset(v_c.items) as s("variantId" uuid, sku text, "productName" text, size text, colour text,
-                                            "unitPriceMinor" bigint, quantity int)
+                                            "unitPriceMinor" bigint, quantity int, "ikpuCode" text,
+                                            "packageCode" text, "vatRateBp" int)
     left join public.product_variants v on v.id = s."variantId"
     left join public.products p on p.id = v.product_id;
 
@@ -313,6 +321,8 @@ begin
     insert into public.order_events (order_id, type, from_status, to_status, payload)
     values (v_order_id, 'payment_received', 'pending_payment', 'paid',
             jsonb_build_object('provider', v_provider, 'provider_payment_id', v_ppid, 'amount_minor', v_amount));
+  elsif p_conflict_mode = 'abort' then
+    raise exception 'STOCK_CONFLICT' using errcode = 'P0001', detail = to_jsonb(v_conflict)::text;
   else
     -- late payment: free anything still held (normally nothing) and flag for automatic refund
     perform app_private.release_reservations_locked(p_checkout_id);
@@ -502,7 +512,7 @@ $$;
 -- Grants: service_role only (table owner `postgres`, used by DATABASE_URL, can always execute)
 -- ---------------------------------------------------------------------------
 revoke all on function public.reserve_checkout(uuid, jsonb, timestamptz) from public, anon, authenticated;
-revoke all on function public.convert_checkout_to_order(uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.convert_checkout_to_order(uuid, jsonb, text) from public, anon, authenticated;
 revoke all on function public.release_checkout(uuid, text) from public, anon, authenticated;
 revoke all on function public.release_expired_reservations(timestamptz, int) from public, anon, authenticated;
 revoke all on function public.adjust_stock(uuid, int, public.inventory_movement_reason, text, uuid) from public, anon, authenticated;
@@ -510,7 +520,7 @@ revoke all on function public.restock_order(uuid, public.inventory_movement_reas
 revoke all on function public.record_payment_event(public.payment_provider, text, text, jsonb) from public, anon, authenticated;
 revoke all on function public.mark_payment_event_processed(public.payment_provider, text, text) from public, anon, authenticated;
 grant execute on function public.reserve_checkout(uuid, jsonb, timestamptz) to service_role;
-grant execute on function public.convert_checkout_to_order(uuid, jsonb) to service_role;
+grant execute on function public.convert_checkout_to_order(uuid, jsonb, text) to service_role;
 grant execute on function public.release_checkout(uuid, text) to service_role;
 grant execute on function public.release_expired_reservations(timestamptz, int) to service_role;
 grant execute on function public.adjust_stock(uuid, int, public.inventory_movement_reason, text, uuid) to service_role;

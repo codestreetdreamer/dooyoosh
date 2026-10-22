@@ -154,7 +154,8 @@ select p.id, p.slug, p.category_id, c.slug as category_slug, c.kind as category_
 
 create view public.storefront_variants with (security_invoker = on) as
 select v.id, v.product_id, v.sku, v.size, v.colour, v.colour_hex,
-       coalesce(v.price_cents, p.base_price_cents) as price_cents, p.currency, v.in_stock as available
+       coalesce(v.price_cents, p.base_price_cents) as price_cents, p.currency, v.in_stock as available,
+       p.ikpu_code, p.package_code, p.vat_rate_bp, p.size_system
   from public.product_variants v
   join public.products p on p.id = v.product_id
  where v.is_active and p.status = 'published' and p.archived_at is null and p.published_at <= now();
@@ -178,21 +179,29 @@ $$;
 revoke all on function public.variant_availability(uuid[]) from public;
 grant execute on function public.variant_availability(uuid[]) to anon, authenticated, service_role;
 
--- 6. Facets for the shop filters (invoker: only published products / active variants the caller can see).
---    No API contract yet (Architect to add); Backend exposes the DB side only.
+-- 6. Facets: GET /api/v1/products/facets (catalog.productFacetsResponse). Invoker: published products with
+--    at least one active in-stock variant only. Counts are distinct product counts.
 create or replace function public.product_facets(p_category_slug text default null)
-returns table (facet text, value text, product_count bigint)
+returns jsonb
 language sql stable security invoker set search_path = '' as $$
   with v as (
-    select sv.product_id, sv.size, sv.colour, sp.price_from_cents
+    select sv.product_id, sv.size, sv.colour, sv.colour_hex, sv.size_system, sv.price_cents, sv.currency
       from public.storefront_variants sv
       join public.storefront_products sp on sp.id = sv.product_id
-     where p_category_slug is null or sp.category_slug = p_category_slug
+     where sv.available and (p_category_slug is null or sp.category_slug = p_category_slug)
   )
-  select 'size', size, count(distinct product_id) from v where size is not null group by size
-  union all
-  select 'colour', colour, count(distinct product_id) from v where colour is not null group by colour
-  order by 1, 2
+  select jsonb_build_object(
+    'sizes', coalesce((select jsonb_agg(jsonb_build_object('value', size, 'label', size, 'count', n, 'sizeSystem', size_system)
+                                        order by size_system, size)
+                         from (select size, size_system, count(distinct product_id) n from v where size is not null
+                               group by size, size_system) s), '[]'::jsonb),
+    'colours', coalesce((select jsonb_agg(jsonb_build_object('value', colour, 'label', colour, 'count', n, 'hex', hex) order by colour)
+                           from (select colour, min(colour_hex) hex, count(distinct product_id) n from v where colour is not null
+                                 group by colour) c), '[]'::jsonb),
+    'priceMinor', (select case when count(*) = 0 then null
+                               else jsonb_build_object('min', min(price_cents), 'max', max(price_cents), 'currency', min(currency)) end
+                     from v)
+  )
 $$;
 revoke all on function public.product_facets(text) from public;
 grant execute on function public.product_facets(text) to anon, authenticated, service_role;

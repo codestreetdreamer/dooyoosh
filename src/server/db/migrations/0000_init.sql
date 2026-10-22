@@ -7,6 +7,7 @@ CREATE TYPE "public"."checkout_status" AS ENUM('open', 'awaiting_payment', 'comp
 CREATE TYPE "public"."order_status" AS ENUM('pending_payment', 'paid', 'stock_conflict', 'fulfilling', 'shipped', 'delivered', 'cancelled', 'refunded', 'partially_refunded');--> statement-breakpoint
 CREATE TYPE "public"."payment_provider" AS ENUM('mock', 'stripe', 'payme', 'click');--> statement-breakpoint
 CREATE TYPE "public"."payment_status" AS ENUM('requires_payment', 'succeeded', 'failed', 'canceled', 'refunded', 'partially_refunded');--> statement-breakpoint
+CREATE TYPE "public"."provider_txn_state" AS ENUM('created', 'performed', 'canceled', 'canceled_after_perform');--> statement-breakpoint
 CREATE TYPE "public"."refund_status" AS ENUM('pending', 'succeeded', 'failed', 'canceled');--> statement-breakpoint
 CREATE TYPE "public"."shipment_status" AS ENUM('label_created', 'in_transit', 'delivered', 'exception');--> statement-breakpoint
 CREATE TYPE "public"."article_status" AS ENUM('draft', 'scheduled', 'published', 'archived');--> statement-breakpoint
@@ -106,7 +107,8 @@ CREATE TABLE "products" (
 	CONSTRAINT "products_vat_rate_bp_range" CHECK ("products"."vat_rate_bp" >= 0 AND "products"."vat_rate_bp" <= 10000),
 	CONSTRAINT "products_published_requires_ikpu" CHECK ("products"."status" <> 'published' OR "products"."ikpu_code" IS NOT NULL),
 	CONSTRAINT "products_published_requires_published_at" CHECK ("products"."status" <> 'published' OR "products"."published_at" IS NOT NULL),
-	CONSTRAINT "products_currency_fmt" CHECK ("products"."currency" ~ '^[A-Z]{3}$')
+	CONSTRAINT "products_currency_fmt" CHECK ("products"."currency" ~ '^[A-Z]{3}$'),
+	CONSTRAINT "products_slug_not_reserved" CHECK ("products"."slug" <> 'facets')
 );
 --> statement-breakpoint
 CREATE TABLE "size_charts" (
@@ -303,6 +305,26 @@ CREATE TABLE "payments" (
 	CONSTRAINT "payments_currency_fmt" CHECK ("payments"."currency" ~ '^[A-Z]{3}$')
 );
 --> statement-breakpoint
+CREATE TABLE "provider_transactions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"provider" "payment_provider" NOT NULL,
+	"provider_txn_id" text NOT NULL,
+	"checkout_id" uuid NOT NULL,
+	"order_id" uuid,
+	"state" "provider_txn_state" DEFAULT 'created' NOT NULL,
+	"amount_cents" bigint NOT NULL,
+	"currency" char(3) NOT NULL,
+	"cancel_reason" integer,
+	"raw" jsonb,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"performed_at" timestamp with time zone,
+	"canceled_at" timestamp with time zone,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "provider_transactions_provider_txn_uq" UNIQUE("provider","provider_txn_id"),
+	CONSTRAINT "provider_transactions_amount_nonneg" CHECK ("provider_transactions"."amount_cents" >= 0),
+	CONSTRAINT "provider_transactions_currency_fmt" CHECK ("provider_transactions"."currency" ~ '^[A-Z]{3}$')
+);
+--> statement-breakpoint
 CREATE TABLE "refunds" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"payment_id" uuid NOT NULL,
@@ -440,6 +462,8 @@ ALTER TABLE "order_items" ADD CONSTRAINT "order_items_variant_id_product_variant
 ALTER TABLE "orders" ADD CONSTRAINT "orders_checkout_id_checkouts_id_fk" FOREIGN KEY ("checkout_id") REFERENCES "public"."checkouts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "orders" ADD CONSTRAINT "orders_shipping_method_id_shipping_methods_id_fk" FOREIGN KEY ("shipping_method_id") REFERENCES "public"."shipping_methods"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "payments" ADD CONSTRAINT "payments_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "provider_transactions" ADD CONSTRAINT "provider_transactions_checkout_id_checkouts_id_fk" FOREIGN KEY ("checkout_id") REFERENCES "public"."checkouts"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "provider_transactions" ADD CONSTRAINT "provider_transactions_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "refunds" ADD CONSTRAINT "refunds_payment_id_payments_id_fk" FOREIGN KEY ("payment_id") REFERENCES "public"."payments"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "shipments" ADD CONSTRAINT "shipments_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "article_products" ADD CONSTRAINT "article_products_article_id_articles_id_fk" FOREIGN KEY ("article_id") REFERENCES "public"."articles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -472,6 +496,8 @@ CREATE INDEX "orders_email_idx" ON "orders" USING btree ("email");--> statement-
 CREATE INDEX "orders_shipping_method_idx" ON "orders" USING btree ("shipping_method_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "payments_one_succeeded_per_order_uq" ON "payments" USING btree ("order_id") WHERE "payments"."status" = 'succeeded';--> statement-breakpoint
 CREATE INDEX "payments_order_idx" ON "payments" USING btree ("order_id");--> statement-breakpoint
+CREATE INDEX "provider_transactions_checkout_idx" ON "provider_transactions" USING btree ("checkout_id");--> statement-breakpoint
+CREATE INDEX "provider_transactions_order_idx" ON "provider_transactions" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "refunds_payment_idx" ON "refunds" USING btree ("payment_id");--> statement-breakpoint
 CREATE INDEX "shipments_order_idx" ON "shipments" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "article_products_product_idx" ON "article_products" USING btree ("product_id");--> statement-breakpoint

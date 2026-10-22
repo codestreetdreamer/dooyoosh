@@ -12,6 +12,7 @@ create temp table _demo_checkouts on commit drop as
   union select o.checkout_id from public.orders o where o.id in (select id from _demo_orders);
 
 delete from public.inventory_movements where variant_id in (select id from _demo_variants);
+delete from public.provider_transactions where checkout_id in (select id from _demo_checkouts) or order_id in (select id from _demo_orders);
 delete from public.refunds where payment_id in (select id from public.payments where order_id in (select id from _demo_orders));
 delete from public.payments where order_id in (select id from _demo_orders);
 delete from public.shipments where order_id in (select id from _demo_orders);

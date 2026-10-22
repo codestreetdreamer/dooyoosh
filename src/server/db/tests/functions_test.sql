@@ -159,6 +159,15 @@ begin
                                                                    'amount_minor', tot, 'currency', 'UZS'));
   if res2->>'status' <> 'paid' then raise exception 'FAIL 6b: %', res2; end if;
   s := pg_temp.stock('FT-C'); if s.on_hand <> 0 or s.reserved <> 0 then raise exception 'FAIL 6b'; end if;
+  -- abort mode: raises STOCK_CONFLICT and leaves no order behind
+  co4 := pg_temp.mk_checkout(jsonb_build_array(jsonb_build_object('variant_id', d, 'quantity', 1)));
+  perform public.reserve_checkout(co4, jsonb_build_array(jsonb_build_object('variant_id', d, 'quantity', 1)), now() + interval '35 min');
+  perform public.release_checkout(co4, 'expired');
+  select total_cents into tot from public.checkouts where id = co4;
+  det := pg_temp.expect_error(format('select public.convert_checkout_to_order(%L, %L, ''abort'')', co4,
+    jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-abort', 'amount_minor', tot, 'currency', 'UZS')), 'STOCK_CONFLICT');
+  if det::jsonb <> to_jsonb(array[d]) or exists (select 1 from public.orders where checkout_id = co4) then
+    raise exception 'FAIL 6c: abort mode left an order or wrong detail %', det; end if;
   raise notice 'PASS 6 QA-06 late convert after release -> stock_conflict, other buyer''s reservation intact; expiry sweep + idempotent release';
 
   -- 7. restock_order (Payme CancelTransaction after Perform): idempotent; stock_conflict order restocks 0
