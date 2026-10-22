@@ -10,7 +10,7 @@ beforeAll(async () => {
 });
 afterAll(() => p.end());
 const items = (v, q) => JSON.stringify([{ variant_id: v, quantity: q }]);
-const ord = (ref) => JSON.stringify({ reference: ref, provider: "mock", provider_payment_id: `pp-${ref}`, amount_minor: 100, currency: "UZS", paid_at: new Date().toISOString() });
+const ord = (ref, amount = 125000000) => JSON.stringify({ reference: ref, provider: "mock", provider_payment_id: `pp-${ref}`, amount_minor: amount, currency: "UZS", paid_at: new Date().toISOString() });
 const ref = () => "DY-20261022-" + Array.from({ length: 5 }, () => "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"[Math.floor(Math.random() * 32)]).join("");
 const stock = async (v) => (await p.query("SELECT stock_on_hand, stock_reserved FROM product_variants WHERE id=$1", [v])).rows[0];
 
@@ -18,7 +18,7 @@ describe("reserve_checkout (0002)", () => {
   it("20 concurrent checkouts for the last unit -> exactly 1 succeeds, others OUT_OF_STOCK with variant id in DETAIL", async (ctx) => {
     if (!has.reserve_checkout) ctx.skip("reserve_checkout not migrated yet");
     const v = await seedVariant(p, { onHand: 1 });
-    const cos = []; for (let i = 0; i < 20; i++) cos.push((await seedCheckout(p)).checkoutId);
+    const cos = []; for (let i = 0; i < 20; i++) cos.push((await seedCheckout(p, { lines: [[v, 1]] })).checkoutId);
     const res = await Promise.all(cos.map(async (co) => {
       const c = new pg.Client(cfg); await c.connect();
       try { await c.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [co, items(v, 1)]); return "ok"; }
@@ -33,17 +33,20 @@ describe("reserve_checkout (0002)", () => {
     if (!has.reserve_checkout) ctx.skip("reserve_checkout not migrated yet");
     const v = await seedVariant(p, { onHand: 5, reserved: 2 });
     for (const q of [0, -1]) {
-      const { checkoutId } = await seedCheckout(p);
-      await expect(p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, q)])).rejects.toBeTruthy();
+      const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
+      await expect(p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, q)]))
+        .rejects.toMatchObject({ code: "P0001", message: "VALIDATION_ERROR", detail: expect.stringContaining('"items"') });
     }
     expect((await stock(v)).stock_reserved).toBe(2);
   });
   it("multi-line: one short line aborts the whole reservation (all-or-nothing)", async (ctx) => {
     if (!has.reserve_checkout) ctx.skip("reserve_checkout not migrated yet");
     const a = await seedVariant(p, { onHand: 5 }); const b = await seedVariant(p, { onHand: 0 });
-    const { checkoutId } = await seedCheckout(p);
-    await expect(p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')",
-      [checkoutId, JSON.stringify([{ variant_id: a, quantity: 1 }, { variant_id: b, quantity: 1 }])])).rejects.toMatchObject({ code: "P0001" });
+    const { checkoutId } = await seedCheckout(p, { lines: [[a, 1], [b, 1]] });
+    const e = await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')",
+      [checkoutId, JSON.stringify([{ variant_id: a, quantity: 1 }, { variant_id: b, quantity: 1 }])]).catch((x) => x);
+    expect(e).toMatchObject({ code: "P0001", message: "OUT_OF_STOCK" });
+    expect(JSON.parse(e.detail)).toEqual([b]);
     expect((await stock(a)).stock_reserved).toBe(0);
   });
 });
@@ -51,7 +54,7 @@ describe("reserve_checkout (0002)", () => {
 describe("convert_checkout_to_order (0002)", () => {
   it("active reservation -> paid, stock_on_hand and reserved decremented, 'sale' movement", async (ctx) => {
     if (!has.convert_checkout_to_order) ctx.skip("convert_checkout_to_order not migrated yet");
-    const v = await seedVariant(p, { onHand: 2 }); const { checkoutId } = await seedCheckout(p);
+    const v = await seedVariant(p, { onHand: 2 }); const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
     await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]);
     const r = (await p.query("SELECT public.convert_checkout_to_order($1,$2::jsonb) r", [checkoutId, ord(ref())])).rows[0].r;
     expect(r.status).toBe("paid");
@@ -61,7 +64,7 @@ describe("convert_checkout_to_order (0002)", () => {
   });
   it("replay -> already_converted, no second order, no second movement", async (ctx) => {
     if (!has.convert_checkout_to_order) ctx.skip("convert_checkout_to_order not migrated yet");
-    const v = await seedVariant(p, { onHand: 2 }); const { checkoutId } = await seedCheckout(p);
+    const v = await seedVariant(p, { onHand: 2 }); const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
     await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]);
     const R = ref();
     await p.query("SELECT public.convert_checkout_to_order($1,$2::jsonb)", [checkoutId, ord(R)]);
@@ -73,7 +76,7 @@ describe("convert_checkout_to_order (0002)", () => {
   it("released reservation (late payment) -> stock_conflict, no CHECK violation, other buyer's unit NOT stolen", async (ctx) => {
     if (!has.convert_checkout_to_order) ctx.skip("convert_checkout_to_order not migrated yet");
     const v = await seedVariant(p, { onHand: 1 });
-    const A = (await seedCheckout(p)).checkoutId; const B = (await seedCheckout(p)).checkoutId;
+    const A = (await seedCheckout(p, { lines: [[v, 1]] })).checkoutId; const B = (await seedCheckout(p, { lines: [[v, 1]] })).checkoutId;
     await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [A, items(v, 1)]);
     await p.query("SELECT public.release_checkout($1,'expired')", [A]);
     await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [B, items(v, 1)]);
@@ -84,10 +87,16 @@ describe("convert_checkout_to_order (0002)", () => {
   });
   it("expired-but-not-yet-swept reservation (expires_at < now) -> stock_conflict", async (ctx) => {
     if (!has.convert_checkout_to_order) ctx.skip("convert_checkout_to_order not migrated yet");
-    const v = await seedVariant(p, { onHand: 1 }); const { checkoutId } = await seedCheckout(p);
-    await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()-interval '1 min')", [checkoutId, items(v, 1)]).catch(() => {});
+    const v = await seedVariant(p, { onHand: 1 }); const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
+    await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]);
+    await p.query("UPDATE stock_reservations SET expires_at = now()-interval '1 min' WHERE checkout_id=$1", [checkoutId]);
     const r = (await p.query("SELECT public.convert_checkout_to_order($1,$2::jsonb) r", [checkoutId, ord(ref())])).rows[0].r;
-    expect(r.status).toBe("stock_conflict");
+    // §12.5 only requires stock_conflict for NON-active reservations; an expired-but-unswept one still holds the unit,
+    // so 'paid' is not an oversell. Provider adapters must refuse Perform/Complete after expiry (tests/integration).
+    expect(["paid", "stock_conflict"]).toContain(r.status);
+    const s = await stock(v);
+    expect(s.stock_on_hand).toBeGreaterThanOrEqual(s.stock_reserved);
+    expect(s).toEqual(r.status === "paid" ? { stock_on_hand: 0, stock_reserved: 0 } : { stock_on_hand: 1, stock_reserved: 0 });
   });
 });
 
@@ -95,7 +104,7 @@ describe("release / expiry / adjust (0002)", () => {
   it("release_expired_reservations frees only expired active reservations, idempotent", async (ctx) => {
     if (!has.release_expired_reservations) ctx.skip("release_expired_reservations not migrated yet");
     const v = await seedVariant(p, { onHand: 3 });
-    const live = (await seedCheckout(p)).checkoutId; const dead = (await seedCheckout(p)).checkoutId;
+    const live = (await seedCheckout(p, { lines: [[v, 1]] })).checkoutId; const dead = (await seedCheckout(p, { lines: [[v, 1]] })).checkoutId;
     await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [live, items(v, 1)]);
     await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [dead, items(v, 1)]);
     await p.query("UPDATE stock_reservations SET expires_at = now()-interval '1 min' WHERE checkout_id=$1", [dead]);
@@ -124,5 +133,42 @@ describe("release / expiry / adjust (0002)", () => {
       await c.query("BEGIN; SET LOCAL ROLE service_role");
       await expect(c.query("UPDATE product_variants SET stock_reserved=0 WHERE id=$1", [v])).rejects.toMatchObject({ code: "42501" });
     } finally { await c.query("ROLLBACK"); c.release(); }
+  });
+});
+
+describe("0002 server-side tamper checks (QA)", () => {
+  it("snapshot price != DB price -> PRICE_CHANGED with variant id", async (ctx) => {
+    if (!has.reserve_checkout) ctx.skip();
+    const v = await seedVariant(p, { onHand: 2 }); const { checkoutId } = await seedCheckout(p, { lines: [[v, 1, 1]] });
+    const e = await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]).catch((x) => x);
+    expect(e).toMatchObject({ code: "P0001", message: "PRICE_CHANGED" }); expect(JSON.parse(e.detail)).toEqual([v]);
+    expect((await stock(v)).stock_reserved).toBe(0);
+  });
+  it("tampered checkout subtotal -> VALIDATION_ERROR subtotal, nothing reserved", async (ctx) => {
+    if (!has.reserve_checkout) ctx.skip();
+    const v = await seedVariant(p, { onHand: 2 }); const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
+    await p.query("UPDATE checkouts SET subtotal_cents = 1, total_cents = 1 WHERE id=$1", [checkoutId]);
+    const e = await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]).catch((x) => x);
+    expect(e).toMatchObject({ code: "P0001", message: "VALIDATION_ERROR" }); expect(e.detail).toContain("subtotal");
+    expect((await stock(v)).stock_reserved).toBe(0);
+  });
+  it("convert with amount != checkout total -> rejected, no order, stock still reserved", async (ctx) => {
+    if (!has.convert_checkout_to_order) ctx.skip();
+    const v = await seedVariant(p, { onHand: 2 }); const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
+    await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]);
+    const e = await p.query("SELECT public.convert_checkout_to_order($1,$2::jsonb) r", [checkoutId, ord(ref(), 125000000 - 1)]).catch((x) => x);
+    expect(e).toBeInstanceOf(Error); expect(e.message).toMatch(/AMOUNT_MISMATCH/);
+    expect((await p.query("SELECT count(*)::int n FROM orders WHERE checkout_id=$1", [checkoutId])).rows[0].n).toBe(0);
+    expect(await stock(v)).toEqual({ stock_on_hand: 2, stock_reserved: 1 });
+  });
+  it("anon/authenticated cannot call reserve/convert/release/adjust (42501)", async () => {
+    for (const role of ["anon", "authenticated"]) {
+      for (const sql of ["SELECT public.reserve_checkout(gen_random_uuid(), '[]'::jsonb, now())", "SELECT public.release_expired_reservations(now(), 1)",
+        "SELECT public.adjust_stock(gen_random_uuid(), 1, 'return', NULL, NULL)", "SELECT public.convert_checkout_to_order(gen_random_uuid(), '{}'::jsonb)"]) {
+        const c = await p.connect();
+        try { await c.query(`BEGIN; SET LOCAL ROLE ${role}`); await expect(c.query(sql), `${role}: ${sql}`).rejects.toMatchObject({ code: "42501" }); }
+        finally { await c.query("ROLLBACK"); c.release(); }
+      }
+    }
   });
 });

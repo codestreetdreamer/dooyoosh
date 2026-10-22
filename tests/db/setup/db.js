@@ -21,11 +21,16 @@ export async function seedShippingMethod(c) {
   const sm = await c.query(`INSERT INTO shipping_methods(market_id,code,name,min_days,max_days) VALUES ($1,'std','Std',1,3) RETURNING id`, [m.rows[0].id]);
   return sm.rows[0].id;
 }
-export async function seedCheckout(c, { total = 100, expiresInMin = 35, shippingMethodId } = {}) {
+// lines: [[variantId, quantity, unitPriceMinor?]] -> a real items snapshot + matching subtotal/total, as the
+// checkout service writes it (0002 reserve_checkout validates snapshot qty/price and subtotal against the DB).
+export async function seedCheckout(c, { total, lines = [], price = 125000000, expiresInMin = 35, shippingMethodId } = {}) {
   const sm = shippingMethodId ?? (await seedShippingMethod(c));
+  const snapshot = lines.map(([variantId, quantity, unit = price]) => ({ variantId, sku: `SKU-${variantId.slice(0, 8)}`, productName: "QA product", size: "M", colour: null, quantity, unitPriceMinor: unit, lineTotalMinor: unit * quantity }));
+  const subtotal = snapshot.reduce((s, l) => s + l.lineTotalMinor, 0);
+  const tot = total ?? (lines.length ? subtotal : 100);
   const cols = ["email", "locale", "currency", "items", "shipping_address", "shipping_method_id", "subtotal_cents", "shipping_cents", "total_cents", "expires_at", "provider"];
-  const vals = ["'a@b.c'", "'uz'", "'UZS'", "'[]'", "'{}'", "$1", `${total}`, "0", `${total}`, `now() + interval '${expiresInMin} min'`, "'mock'"];
+  const vals = ["'a@b.c'", "'uz'", "'UZS'", "$2::jsonb", "'{}'", "$1", `${lines.length ? subtotal : tot}`, "0", `${tot}`, `now() + interval '${expiresInMin} min'`, "'mock'"];
   if (await hasColumn(c, "checkouts", "access_token_hash")) { cols.push("access_token_hash"); vals.push("encode(sha256('tok'::bytea),'hex')"); }
-  const r = await c.query(`INSERT INTO checkouts(${cols.join(",")}) VALUES (${vals.join(",")}) RETURNING id`, [sm]);
-  return { checkoutId: r.rows[0].id, shippingMethodId: sm };
+  const r = await c.query(`INSERT INTO checkouts(${cols.join(",")}) VALUES (${vals.join(",")}) RETURNING id`, [sm, JSON.stringify(snapshot)]);
+  return { checkoutId: r.rows[0].id, shippingMethodId: sm, totalMinor: tot };
 }

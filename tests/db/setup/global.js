@@ -8,7 +8,7 @@ import path from "node:path";
 import os from "node:os";
 
 export const PORT = Number(process.env.QA_PG_PORT || 54329);
-const ROOT = path.resolve(import.meta.dirname, "../../..");
+const ROOT = process.env.QA_DB_ROOT ? path.resolve(process.env.QA_DB_ROOT) : path.resolve(import.meta.dirname, "../../..");
 const MIGRATIONS = path.join(ROOT, "src/server/db/migrations");
 const EMU = path.join(ROOT, "src/server/db/tests/supabase_emulation.sql");
 

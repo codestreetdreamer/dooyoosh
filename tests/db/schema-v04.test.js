@@ -59,11 +59,28 @@ describe("function hardening (§12.5)", () => {
     const bad = rows.filter((r) => !(r.proconfig || []).some((x) => /^search_path=("")?$/.test(x))).map((r) => r.f);
     expect(bad).toEqual([]);
   });
-  it("anon/authenticated cannot EXECUTE any public function except variant_availability", async () => {
+  // product_facets is public by contract (CONTRACTS productFacets, auth none); allowed only as SECURITY INVOKER over storefront views.
+  const PUBLIC_FNS = ["variant_availability", "product_facets"];
+  it("anon/authenticated cannot EXECUTE any public function except variant_availability / product_facets", async () => {
     const { rows } = await p.query(`SELECT proname, has_function_privilege('anon', p.oid, 'EXECUTE') a, has_function_privilege('authenticated', p.oid, 'EXECUTE') u
       FROM pg_proc p WHERE pronamespace='public'::regnamespace`);
-    const bad = rows.filter((r) => r.proname !== "variant_availability" && (r.a || r.u)).map((r) => r.proname);
+    const bad = rows.filter((r) => !PUBLIC_FNS.includes(r.proname) && (r.a || r.u)).map((r) => r.proname);
     expect(bad).toEqual([]);
+  });
+  it("product_facets is SECURITY INVOKER and does not count draft products for anon", async (ctx) => {
+    const f = (await p.query(`SELECT prosecdef FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname='product_facets'`)).rows[0];
+    if (!f) ctx.skip("product_facets not migrated");
+    expect(f.prosecdef, "product_facets must not be SECURITY DEFINER").toBe(false);
+    const cat = await p.query(`INSERT INTO categories(slug,kind) VALUES ('c-'||gen_random_uuid(),'clothing') RETURNING id, slug`);
+    const pr = await p.query(`INSERT INTO products(slug,category_id,base_price_cents,currency,size_system,status) VALUES ('p-'||gen_random_uuid(),$1,999999999,'UZS','alpha','draft') RETURNING id`, [cat.rows[0].id]);
+    await p.query(`INSERT INTO product_variants(product_id,sku,size,stock_on_hand,is_active) VALUES ($1,'SKU-'||gen_random_uuid(),'QA-DRAFT-SIZE',5,true)`, [pr.rows[0].id]);
+    const c = await p.connect();
+    try {
+      await c.query("BEGIN; SET LOCAL ROLE anon");
+      const r = (await c.query("SELECT public.product_facets($1) f", [cat.rows[0].slug])).rows[0].f;
+      expect(JSON.stringify(r)).not.toContain("QA-DRAFT-SIZE");
+      expect(r.priceMinor).toBeNull();
+    } finally { await c.query("ROLLBACK"); c.release(); }
   });
   it("app_private: anon/authenticated may only EXECUTE is_admin", async () => {
     const { rows } = await p.query(`SELECT proname, has_function_privilege('anon', p.oid, 'EXECUTE') a, has_function_privilege('authenticated', p.oid, 'EXECUTE') u
