@@ -1,13 +1,12 @@
-/** GET /api/v1/products/facets?category=&locale= (contract: catalog.productFacetsQuery -> catalog.productFacetsResponse). */
-import { productFacetsQuery } from "@/contracts/catalog";
-import { ApiError, withErrors } from "@/lib/errors";
+/** GET /api/v1/products/facets?category=&locale= (catalog.productFacetsQuery -> catalog.productFacetsResponse). Owner: Backend & Database. */
+import { productFacetsQuery, productFacetsResponse } from "@/contracts/catalog";
+import { withErrors } from "@/lib/errors";
 import { getProductFacets } from "@/server/catalog/facets";
+import { parseQuery, respond } from "@/server/catalog/http";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withErrors(async (req: Request) => {
-  const q = productFacetsQuery.safeParse(Object.fromEntries(new URL(req.url).searchParams));
-  if (!q.success) throw ApiError.validation("Invalid query", q.error.issues);
-  const body = await getProductFacets(q.data.category);
-  return Response.json(body, { headers: { "cache-control": "public, s-maxage=60, stale-while-revalidate=300" } });
+  const q = parseQuery(productFacetsQuery, req);
+  return respond(productFacetsResponse, await getProductFacets(q.category));
 });

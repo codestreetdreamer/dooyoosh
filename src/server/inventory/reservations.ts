@@ -71,7 +71,7 @@ export class StockConflictError extends Error {
 
 export const inventory: InventoryService & {
   convertWith(checkoutId: string, order: ConvertOrderInput, opts: ConvertOptions, tx?: TxLike): Promise<ConvertResult>;
-  restockOrder(orderId: string, reason: "return" | "cancellation", actorId: string | null, note?: string, tx?: TxLike): Promise<number>;
+  restockOrder(orderId: string, reason?: "return" | "cancellation", actorId?: string | null, note?: string, tx?: TxLike): Promise<number>;
 } = {
   async reserve(checkoutId: string, lines: ReserveLine[], expiresAt: Date, tx?: TxLike): Promise<ReserveResult> {
     const items = JSON.stringify(lines.map((l) => ({ variant_id: l.variantId, quantity: l.quantity })));
@@ -149,11 +149,11 @@ export const inventory: InventoryService & {
   },
 
   /** Return path (e.g. Payme CancelTransaction after Perform): puts back what the order's 'sale' movements took. Idempotent. */
-  async restockOrder(orderId, reason, actorId, note, tx) {
+  async restockOrder(orderId: string, reason: "return" | "cancellation" = "return", actorId: string | null = null, note?: string, tx?: TxLike) {
     try {
       const r = rows<{ n: number }>(
         await exec(tx).execute(
-          sql`select public.restock_order(${orderId}::uuid, ${reason}::public.inventory_movement_reason, ${actorId}::uuid, ${note ?? null}) as n`,
+          sql`select public.restock_order(${orderId}::uuid, ${reason}::public.inventory_movement_reason, ${actorId ?? null}::uuid, ${note ?? null}) as n`,
         ),
       );
       return Number(r[0]?.n ?? 0);
@@ -163,10 +163,11 @@ export const inventory: InventoryService & {
   },
 };
 
-export const { reserve, convert, release, releaseExpired, adjust } = {
+export const { reserve, convert, release, releaseExpired, adjust, restockOrder } = {
   reserve: inventory.reserve.bind(inventory),
   convert: inventory.convert.bind(inventory),
   release: inventory.release.bind(inventory),
   releaseExpired: inventory.releaseExpired.bind(inventory),
   adjust: inventory.adjust.bind(inventory),
+  restockOrder: inventory.restockOrder.bind(inventory),
 };

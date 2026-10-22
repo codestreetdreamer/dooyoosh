@@ -13,12 +13,29 @@ export type Db = PostgresJsDatabase<typeof schema>;
 let client: postgres.Sql | undefined;
 let db: Db | undefined;
 
+/** Raw postgres-js client (owner role behind DATABASE_URL; bypasses RLS). Server only. */
+export function getSql(): postgres.Sql {
+  client ??= postgres(serverEnv().DATABASE_URL, { prepare: false, max: 5, idle_timeout: 20 });
+  return client;
+}
+
 export function getDb(): Db {
-  if (!db) {
-    client = postgres(serverEnv().DATABASE_URL, { prepare: false, max: 5, idle_timeout: 20 });
-    db = drizzle(client, { schema });
-  }
+  db ??= drizzle(getSql(), { schema });
   return db;
+}
+
+export type Tx = postgres.TransactionSql;
+
+/**
+ * Public storefront reads: a READ ONLY transaction that drops to the `anon` role, so RLS, column grants
+ * (no stock counts) and the security_invoker storefront_* views apply exactly as for a browser anon key.
+ */
+export async function asAnon<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return (await getSql().begin("read only", async (tx) => {
+    await tx`set local role anon`;
+    await tx`select set_config('request.jwt.claims', '{"role":"anon"}', true)`;
+    return fn(tx);
+  })) as T;
 }
 
 /** Shape of a Postgres error raised by our SQL functions (RAISE ... USING ERRCODE='P0001'). */
