@@ -31,8 +31,9 @@ export const validatedCartLine = z.object({
   quantity: z.number().int().min(0),
   lineTotalMinor: nonNegativeMinor,
   available: z.boolean(),
-  /** max quantity purchasable now, capped at MAX_LINE_QTY (exact stock hidden) */
-  maxQuantity: z.number().int().min(0).max(MAX_LINE_QTY),
+  /** true when sellable stock <= 3 ("Only a few left"). Exact stock is never returned (spec §2);
+   *  requested quantity above stock -> issue "insufficient_stock". */
+  lowStock: z.boolean(),
   issue: z.enum(CART_LINE_ISSUES).nullable(),
 });
 export type ValidatedCartLine = z.infer<typeof validatedCartLine>;
