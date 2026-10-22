@@ -118,7 +118,9 @@
     "errorTitle": "We could not check your bag",
     "errorBody": "Your items are saved. Please try again.",
     "retry": "Try again",
-    "reservedFor": "Reserved for {time}"
+    "reservedFor": "Reserved for {time}",
+    "issue_unpublished": "No longer available — please remove this item.",
+    "issue_unknown": "This item can't be ordered right now — please remove it."
   },
   "checkout": {
     "title": "Checkout",

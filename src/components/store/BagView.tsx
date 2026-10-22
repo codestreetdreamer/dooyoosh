@@ -105,7 +105,7 @@ export function BagView() {
                   <Price amountMinor={unit} currency={currency} locale={locale} className="mt-1 block text-sm" />
                   {issue ? (
                     <p role="alert" className="mt-2 text-sm text-danger">
-                      {issue === "insufficient_stock" ? t("issue_insufficient_stock", { max: v?.maxQuantity ?? 0 }) : t(`issue_${issue}`)}
+                      {issueLabel(issue, v?.maxQuantity ?? 0, t)}
                     </p>
                   ) : null}
                   <div className="mt-4 flex items-center gap-6">
@@ -149,4 +149,11 @@ export function BagView() {
       </aside>
     </div>
   );
+}
+
+const KNOWN_ISSUES = new Set(["out_of_stock", "inactive", "unpublished", "not_found"]);
+/** Copy for a cart line issue; unknown future codes degrade to a generic "can't be ordered" message. */
+export function issueLabel(issue: string, max: number, t: (k: string, v?: Record<string, number>) => string): string {
+  if (issue === "insufficient_stock") return t("issue_insufficient_stock", { max });
+  return KNOWN_ISSUES.has(issue) ? t(`issue_${issue}`) : t("issue_unknown");
 }

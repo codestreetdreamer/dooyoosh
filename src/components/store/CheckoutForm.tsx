@@ -8,6 +8,7 @@ import { call } from "@/lib/store/data-source";
 import { apiLocale } from "@/lib/store/i18n-helpers";
 import { saveReservation } from "@/lib/store/reservation";
 import { checkoutScope, storeToken } from "@/lib/store/url-token";
+import { issueLabel } from "@/components/store/BagView";
 import { IdempotencyKeeper } from "@/lib/store/idempotency";
 import { EmptyState, Spinner } from "@/components/ui/States";
 import { Price } from "./Price";
@@ -43,6 +44,7 @@ function fieldErrorsFromIssues(details: Record<string, unknown>, fallback: strin
 
 export function CheckoutForm() {
   const t = useTranslations("checkout");
+  const tb = useTranslations("bag");
   const locale = useLocale();
   const { lines } = useBag();
   const bag = useValidatedBag();
@@ -129,11 +131,8 @@ export function CheckoutForm() {
     };
     const send = () => call("createCheckout", { body: { ...payload, idempotencyKey: idem.current.keyFor(payload) } });
     let res = await send();
-    // 409 that is NOT a stock/price conflict = idempotency key reused with a different payload: new key, retry once.
-    const isKeyConflict = (r: typeof res) =>
-      !r.ok && ((r.status === 409 && r.error.code !== "OUT_OF_STOCK" && r.error.code !== "PRICE_CHANGED") ||
-        (r.status === 400 && /idempotency/i.test(r.error.message)));
-    if (isKeyConflict(res)) {
+    // 409 IDEMPOTENCY_CONFLICT = key already used for a different payload (or a closed checkout): new key, retry once.
+    if (!res.ok && res.error.code === "IDEMPOTENCY_CONFLICT") {
       idem.current.reset();
       res = await send();
     }
@@ -273,7 +272,7 @@ export function CheckoutForm() {
                     <span>
                       {l.productName} <span className="text-muted">× {l.quantity}</span>
                       <span className="block text-xs text-muted">{[l.colour, l.size].filter(Boolean).join(" · ")}</span>
-                      {l.issue ? <span className="block text-xs text-danger">{l.issue.replace(/_/g, " ")}</span> : null}
+                      {l.issue ? <span className="block text-xs text-danger">{issueLabel(l.issue, l.maxQuantity ?? 0, tb)}</span> : null}
                     </span>
                     <Price amountMinor={l.lineTotalMinor} currency={bag.data!.currency} locale={locale} />
                   </li>
