@@ -16,7 +16,7 @@ export const POST = withErrors(async (req: Request) => {
   const raw = await req.clone().json().catch(() => null) as { website?: unknown } | null;
   const honeypot = typeof raw?.website === "string" && raw.website.length > 0;
   const body = honeypot ? null : await parseBody(newsletterSignupRequest, req);
-  const allowed = rateLimit(`newsletter:ip:${clientIp(req.headers)}`, 5, 10 * 60_000)
+  const allowed = rateLimit(`newsletter:ip:${clientIp(req.headers)}`, 10, 10 * 60_000)
     && (!body || rateLimit(`newsletter:email:${body.email}`, 3, 60 * 60_000));
   if (body && allowed) await signup(body.email, body.locale);
   return respond(newsletterSignupResponse, ACCEPTED, { status: 202, cache: CACHE_NONE });
