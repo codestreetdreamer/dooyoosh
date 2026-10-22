@@ -72,7 +72,10 @@ export function Header() {
         <Link href="/" className="justify-self-center" aria-label="Dooyoosh — home">
           <Wordmark />
         </Link>
-        <div className="flex items-center justify-end gap-6">
+        <div className="flex items-center justify-end gap-4 lg:gap-6">
+          <Link href="/search" className="link-underline py-1 text-[0.74rem] uppercase tracking-[0.14em]" aria-current={isActive("/search") ? "page" : undefined}>
+            {t("search")}
+          </Link>
           <Link href="/journal" className="link-underline hidden py-1 text-[0.74rem] uppercase tracking-[0.14em] lg:inline" aria-current={isActive("/journal") ? "page" : undefined}>
             {t("journal")}
           </Link>

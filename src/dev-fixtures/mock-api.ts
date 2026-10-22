@@ -201,6 +201,14 @@ export async function mockApi<N extends EndpointName>(name: N, args: RequestArgs
       const art = fixtureArticles.find((x) => x.slug === a.params?.slug);
       return art ? ok({ data: art }) : fail(404, "NOT_FOUND", "Article not found");
     }
+    case "search": {
+      const q = String(a.query?.q ?? "").toLowerCase();
+      const prods = fixtureProducts.filter((p) => p.name.toLowerCase().includes(q)).map((p) => ({ type: "product" as const, product: toCard(p) }));
+      const arts = fixtureArticles.filter((x) => x.title.toLowerCase().includes(q)).map((x) => ({ type: "article" as const, article: { id: x.id, slug: x.slug, title: x.title, excerpt: x.excerpt } }));
+      return ok({ data: [...prods, ...arts] });
+    }
+    case "newsletterConfirm":
+      return ok({ data: { status: "confirmed" } });
     case "newsletterSignup":
       return ok({ data: { status: "pending_confirmation" } }, 202);
     default:

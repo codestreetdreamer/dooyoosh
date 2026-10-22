@@ -1,6 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import { Monogram } from "./Logo";
+import { NewsletterForm } from "@/components/journal/NewsletterForm";
 
 export async function Footer() {
   const t = await getTranslations("footer");
@@ -16,6 +17,7 @@ export async function Footer() {
         <div>
           <Monogram className="h-20 w-20" />
           <p className="mt-4 max-w-xs font-display text-2xl leading-snug">{t("tagline")}</p>
+          <div className="mt-8"><NewsletterForm /></div>
         </div>
         {cols.map((col) => (
           <nav key={col.title} aria-label={col.title}>
