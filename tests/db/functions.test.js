@@ -172,3 +172,15 @@ describe("0002 server-side tamper checks (QA)", () => {
     }
   });
 });
+
+describe("[OPEN — Backend 0009] strict: expired reservation must not convert", () => {
+  it("expired-but-not-yet-swept reservation (expires_at < now) -> stock_conflict (Perform/Complete after expiry never sells)", async (ctx) => {
+    if (!has.convert_checkout_to_order) ctx.skip();
+    const v = await seedVariant(p, { onHand: 1 }); const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
+    await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]);
+    await p.query("UPDATE stock_reservations SET expires_at = now()-interval '1 min' WHERE checkout_id=$1", [checkoutId]);
+    const r = (await p.query("SELECT public.convert_checkout_to_order($1,$2::jsonb) r", [checkoutId, ord(ref())])).rows[0].r;
+    expect(r.status).toBe("stock_conflict");
+    expect(await stock(v)).toEqual({ stock_on_hand: 1, stock_reserved: 0 });
+  });
+});

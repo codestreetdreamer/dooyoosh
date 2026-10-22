@@ -10,8 +10,11 @@ export async function siteUp() {
   return up;
 }
 /** call at top of a describe: skips everything when the app is not running */
+let wasUp = false;
 export function requireSite() {
-  test.beforeAll(async () => { test.skip(!(await siteUp()), `app not reachable at ${SITE_URL} (run \`pnpm build && pnpm start\` or set SITE_URL)`); });
+  test.beforeAll(async () => { wasUp = await siteUp(); test.skip(!wasUp, `app not reachable at ${SITE_URL} (run \`pnpm build && pnpm start\` or set SITE_URL)`); });
+  // Server liveness before EVERY test: if it was up and died mid-run, fail loudly instead of reporting bogus page errors.
+  test.beforeEach(async () => { if (wasUp && !(await siteUp())) throw new Error(`SERVER DOWN: ${SITE_URL} stopped responding mid-run`); });
 }
 async function j(path) { try { const r = await fetch(API + path); return r.ok ? await r.json() : null; } catch { return null; } }
 export async function firstProductSlug() { return process.env.QA_PRODUCT_SLUG || (await j("/products?limit=1"))?.data?.[0]?.slug; }

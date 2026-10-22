@@ -53,7 +53,8 @@ async function create(m: Mods, over: Record<string, unknown> = {}) {
   const r = await m.checkout.POST(post(`${B}/checkout`, body(m, over)));
   return { r, j: await json(r) };
 }
-const tokenOf = (data: any): string | null => data?.guestToken ?? data?.accessToken ?? (data?.redirectUrl ? new URL(data.redirectUrl).searchParams.get("token") : null);
+const tokenOf = (data: any): string | null => data?.accessToken ?? data?.guestToken ?? (data?.redirectUrl ? new URL(data.redirectUrl).searchParams.get("token") : null);
+const statusReq = (id: string, token?: string, query = "") => new Request(`${B}/checkout/${id}/status${query}`, token ? { headers: { authorization: `Bearer ${token}` } } : {});
 const sandboxPay = (m: Mods, id: string, token: string | undefined, outcome = "success", query = "") =>
   m.sandbox.POST(post(`${B}/checkout/${id}/sandbox-pay${query}`, token === undefined ? { outcome } : { token, outcome }), params({ checkoutId: id }));
 const signMock = (raw: string, t = Math.floor(Date.now() / 1000), secret = SECRET) => `t=${t},v1=${createHmac("sha256", secret).update(`${t}.${raw}`).digest("hex")}`;
@@ -129,6 +130,9 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       const a = await create(m, { idempotencyKey: key }); const b = await create(m, { idempotencyKey: key });
       expect(b.j.data.checkoutId).toBe(a.j.data.checkoutId);
       expect(tokenOf(b.j.data)).toBe(tokenOf(a.j.data));
+      expect([200, 201]).toContain(b.r.status);
+      const bad = await create(m, { idempotencyKey: "not-a-uuid" });
+      expect(bad.r.status, "idempotencyKey must be a uuid").toBe(400);
       expect(m.store.stock(m.v).reserved).toBe(1);
     });
     it("same idempotencyKey with a DIFFERENT cart must not silently return the old checkout", async () => {
@@ -136,7 +140,9 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       const a = await create(m, { idempotencyKey: key });
       const b = await create(m, { idempotencyKey: key, items: [{ variantId: m.v, quantity: 2 }] });
       // returning a's checkout (1 item) for a 2-item request means the customer pays for a cart they did not submit
-      expect(b.r.status === 409 || b.r.status === 400 || b.j.data?.checkoutId !== a.j.data.checkoutId).toBe(true);
+      expect(b.r.status, JSON.stringify(b.j)).toBe(409);
+      expect(b.j.error.code).toBe("IDEMPOTENCY_CONFLICT");
+      expect(m.store.stock(m.v).reserved, "conflicting retry must not reserve").toBe(1);
     });
   });
 
@@ -147,17 +153,20 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
     it("wrong token / unknown id -> identical 404 NOT_FOUND", async () => {
       const { j } = await create(m);
       const bad = "q".repeat(40);
-      const a = await m.status.GET(new Request(`${B}/checkout/${j.data.checkoutId}/status?token=${bad}`), params({ checkoutId: j.data.checkoutId }));
+      const a = await m.status.GET(statusReq(j.data.checkoutId, bad), params({ checkoutId: j.data.checkoutId }));
       const id2 = randomUUID();
-      const b = await m.status.GET(new Request(`${B}/checkout/${id2}/status?token=${bad}`), params({ checkoutId: id2 }));
+      const b = await m.status.GET(statusReq(id2, bad), params({ checkoutId: id2 }));
+      const q = await m.status.GET(statusReq(j.data.checkoutId, undefined, `?token=${tokenOf(j.data)}`), params({ checkoutId: j.data.checkoutId }));
+      expect(q.status, "?token= in the URL must be refused (400)").toBe(400);
+      const none = await m.status.GET(statusReq(j.data.checkoutId), params({ checkoutId: j.data.checkoutId }));
+      expect([400, 401, 404]).toContain(none.status);
       expect(a.status).toBe(404); expect(b.status).toBe(404);
       expect(await json(a)).toEqual(await json(b));
     });
-    it("response carries data.guestToken (contract cfd5cee) and the token is NOT in redirectUrl", async () => {
+    it("response carries data.accessToken (main 12599c0) and the token is NOT in redirectUrl", async () => {
       const { r, j } = await create(m);
       expect(r.status, JSON.stringify(j)).toBe(201);
-      // contract cfd5cee names it guestToken; Payments 935dfa3 returns accessToken -> response parse fails on main (QA-?)
-      expect(typeof j.data.guestToken, "data.guestToken missing (contract cfd5cee); got keys " + Object.keys(j.data)).toBe("string");
+      expect(typeof j.data.accessToken, "data.accessToken missing; got keys " + Object.keys(j.data)).toBe("string");
       const t = tokenOf(j.data)!;
       expect(j.data.redirectUrl, "guest token must never be put in a URL (provider/third-party Referer + logs)").not.toContain(t);
       expect(j.data.redirectUrl).not.toContain(encodeURIComponent(t));
@@ -179,9 +188,9 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       const a = await create(m); const b = await create(m);
       const ta = tokenOf(a.j.data);
       expect(ta, "redirectUrl has no token").toBeTruthy();
-      const ok = await m.status.GET(new Request(`${B}/checkout/${a.j.data.checkoutId}/status?token=${ta}`, { headers: { authorization: `Bearer ${ta}` } }), params({ checkoutId: a.j.data.checkoutId }));
+      const ok = await m.status.GET(statusReq(a.j.data.checkoutId, ta!), params({ checkoutId: a.j.data.checkoutId }));
       expect(ok.status).toBe(200);
-      const cross = await m.status.GET(new Request(`${B}/checkout/${b.j.data.checkoutId}/status?token=${ta}`, { headers: { authorization: `Bearer ${ta}` } }), params({ checkoutId: b.j.data.checkoutId }));
+      const cross = await m.status.GET(statusReq(b.j.data.checkoutId, ta!), params({ checkoutId: b.j.data.checkoutId }));
       expect(cross.status).toBe(404);
     });
     it("sandbox-pay requires the token in the BODY (missing -> 400, in query -> 400, wrong -> 404) and creates no order", async () => {
@@ -206,14 +215,22 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       const s = await sandboxPay(live, id, t);
       expect([403, 404]).toContain(s.status);
     });
-    it("sandbox-pay is refused when NODE_ENV=production", async () => {
-      const p = await load("mock", { NODE_ENV: "production", ALLOW_MOCK_IN_PRODUCTION: "true" }).catch((e) => e);
-      if (p instanceof Error) return;
-      const id = randomUUID();
-      const s = await p.sandbox.POST(new Request(`${B}/checkout/${id}/sandbox-pay?token=${"q".repeat(40)}&outcome=success`, { method: "POST" }), params({ checkoutId: id }));
-      expect([403, 500]).toContain(s.status);
-      expect(s.status, "NODE_ENV=production must give a clean 403, not a 500 from the memory-store guard").toBe(403);
+    it("response-schema failure is a 500 INTERNAL (not a client 400)", async () => {
+      const { j } = await create(m); const id = j.data.checkoutId; const t = tokenOf(j.data)!;
+      const row = (m.store as any).s.checkouts.get(id); row.status = "qa-not-a-status";
+      const r = await m.status.GET(statusReq(id, t), params({ checkoutId: id }));
+      expect(r.status).toBe(500);
+      const body = await json(r); expect(body.error.code).toBe("INTERNAL");
+      expect(JSON.stringify(body)).not.toMatch(/qa-not-a-status|issues|zod/i);
     });
+    it("sandbox-pay is a clean 404 when SANDBOX_SIMULATOR_ENABLED is not 'true' (gate closed), never 500", async () => {
+      for (const extra of [{ SANDBOX_SIMULATOR_ENABLED: "false" }, { SANDBOX_SIMULATOR_ENABLED: "" }, { PAYMENT_MODE: "live", NEXT_PUBLIC_PAYMENT_MODE: "live", SANDBOX_SIMULATOR_ENABLED: "true" }]) {
+        const g = await load("mock", extra).catch((e) => e);
+        if (g instanceof Error) continue;
+        const id = randomUUID();
+        expect((await sandboxPay(g, id, "q".repeat(43))).status, JSON.stringify(extra)).toBe(404);
+      }
+    })
   });
 
   describe("mock webhook signatures + idempotency", () => {
@@ -459,19 +476,21 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       }
       void m;
     });
-    it("GET /orders/{ref}: right token -> 200, wrong token / other order's token -> 404; token accepted via Authorization: Bearer", async (ctx) => {
+    it("GET /orders/{ref}: Bearer only (?token= -> 400); right token 200, wrong / other order's token 404", async (ctx) => {
       if (!fs.existsSync(path.join(ROOT, "src/app/api/v1/orders/[reference]/route.ts"))) ctx.skip();
       const m = await load("mock");
       const orders = await import("@/app/api/v1/orders/[reference]/route");
       const pay = async () => {
         const { j } = await create(m); const t = tokenOf(j.data)!;
         await sandboxPay(m, j.data.checkoutId, t);
-        const st = await json(await m.status.GET(new Request(`${B}/checkout/${j.data.checkoutId}/status?token=${t}`), params({ checkoutId: j.data.checkoutId })));
+        const st = await json(await m.status.GET(statusReq(j.data.checkoutId, t), params({ checkoutId: j.data.checkoutId })));
         return { ref: st.data.orderReference as string, t };
       };
       const a = await pay(); const b = await pay();
       expect(a.ref).toBeTruthy();
-      const q = (ref: string, tok: string) => orders.GET(new Request(`${B}/orders/${ref}?token=${tok}`), params({ reference: ref }));
+      const q = (ref: string, tok: string) => orders.GET(new Request(`${B}/orders/${ref}`, { headers: { authorization: `Bearer ${tok}` } }), params({ reference: ref }));
+      const inQuery = await orders.GET(new Request(`${B}/orders/${a.ref}?token=${a.t}`), params({ reference: a.ref }));
+      expect(inQuery.status, "/orders/{ref}?token= must be refused (400)").toBe(400);
       expect((await q(a.ref, a.t)).status).toBe(200);
       expect((await q(a.ref, "q".repeat(43))).status).toBe(404);
       expect((await q(a.ref, b.t)).status, "token of another order must not open this one").toBe(404);
