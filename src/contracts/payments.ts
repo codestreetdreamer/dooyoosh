@@ -98,7 +98,7 @@ export type PaymentMode = "sandbox" | "live";
 /** Extra request facts some providers need (Click/Payme IP allow-lists). */
 export interface WebhookRequestMeta {
   method: string;
-  /** first hop of x-forwarded-for on Vercel */
+  /** value of the TRUSTED_IP_HEADER request header (default x-vercel-forwarded-for); null if absent. Never x-forwarded-for / x-real-ip. */
   ip: string | null;
 }
 
