@@ -5,7 +5,7 @@
  * ignored) -> ONE transaction { insert checkouts row; inventory.reserve (reserve_checkout) } -> provider.createSession
  * -> store provider_session_id. Provider session = 30 min, reservation = 35 min (contracts/checkout.ts).
  */
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { PROVIDER_SESSION_TTL_MINUTES, RESERVATION_TTL_MINUTES, type CreateCheckoutRequest, type CreateCheckoutResponse } from "@/contracts/checkout";
 import type { CheckoutStatusResponse } from "@/contracts/orders";
 import { ApiError } from "@/lib/errors";
@@ -14,7 +14,7 @@ import type { PaymentDeps } from "../payments/deps";
 import type { CheckoutRow, NewCheckout } from "../payments/store";
 import { computeQuote, linesMissingFiscalData, validateLines } from "./pricing";
 import { deriveAccessToken, hashAccessToken, tokenMatches } from "./token";
-import { IdempotencyConflictError, requestHash } from "./idempotency";
+import { payloadHash } from "./idempotency";
 
 /**
  * accessToken: the guest token, derived (token.ts), never stored (only its HMAC hash), never in any URL (redirect,
@@ -67,10 +67,10 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
   validateLines(req.items);
 
   // Idempotent retry (contracts: idempotencyKey). Key bound to the payload hash; same key -> same checkout, no second reservation.
-  const reqHash = req.idempotencyKey ? requestHash(deps.config.tokenSecret, req) : null;
+  const reqHash = req.idempotencyKey ? payloadHash(deps.config.tokenSecret, req) : null;
   if (req.idempotencyKey) {
-    const existing = await repo.getCheckoutByIdempotencyKey(req.idempotencyKey);
-    if (existing) return replay(deps, provider, existing, reqHash!);
+    const existingId = await repo.checkoutIdForIdempotencyKey(req.idempotencyKey, reqHash!);
+    if (existingId) return replay(deps, provider, (await repo.getCheckout(existingId))!);
   }
 
   const variants = await repo.getVariantsForCheckout(req.items.map((i) => i.variantId), req.locale);
@@ -90,7 +90,7 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
   const c: NewCheckout = {
     id,
     idempotencyKey: req.idempotencyKey ?? null,
-    idempotencyRequestHash: reqHash,
+    idempotencyPayloadHash: reqHash,
     accessTokenHash: hashAccessToken(deps.config.tokenSecret, deriveAccessToken(deps.config.tokenSecret, id, req.idempotencyKey ?? null)),
     email: req.email,
     phone: req.phone ?? req.shippingAddress.phone ?? null,
@@ -121,8 +121,8 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
   } catch (e) {
     // concurrent submit with the same key won the UNIQUE(idempotency_key) race: answer as a replay of the winner
     if (req.idempotencyKey && isUniqueViolation(e)) {
-      const winner = await repo.getCheckoutByIdempotencyKey(req.idempotencyKey);
-      if (winner) return replay(deps, provider, winner, reqHash!);
+      const winnerId = await repo.checkoutIdForIdempotencyKey(req.idempotencyKey, reqHash!);
+      if (winnerId) return replay(deps, provider, (await repo.getCheckout(winnerId))!);
     }
     throw e;
   }
@@ -144,9 +144,8 @@ function isUniqueViolation(e: unknown): boolean {
   return !!o && (o.code === "23505" || (typeof o.message === "string" && o.message.includes("unique violation: idempotency_key")));
 }
 
-async function replay(deps: PaymentDeps, provider: PaymentProvider, existing: CheckoutRow, reqHash: string): Promise<CheckoutData> {
-  const h = existing.idempotencyRequestHash;
-  if (!h || h.length !== reqHash.length || !timingSafeEqual(Buffer.from(h), Buffer.from(reqHash))) throw new IdempotencyConflictError();
+/** Caller already passed checkoutIdForIdempotencyKey(key, hash), which throws IDEMPOTENCY_CONFLICT on a hash mismatch. */
+async function replay(deps: PaymentDeps, provider: PaymentProvider, existing: CheckoutRow): Promise<CheckoutData> {
   if ((existing.status === "open" || existing.status === "awaiting_payment") && existing.expiresAt > deps.now() && existing.provider === provider.name) {
     const s = await openSession(deps, provider, existing);
     return toData(existing, provider, s.redirectUrl, deps.config.tokenSecret, true);

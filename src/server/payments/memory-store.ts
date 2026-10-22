@@ -6,7 +6,8 @@
  *    variant counters, QA-06); otherwise releases leftovers and records the order as stock_conflict
  *  - adjust: append-only movement ledger
  */
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { ApiError } from "@/lib/errors";
 import type { OrderStatus } from "@/contracts/orders";
 import type { CheckoutStatus } from "@/contracts/checkout";
 import type { AdjustStockInput, ConvertOrderInput, ConvertResult, InventoryService, ReleaseReason, ReserveLine, ReserveResult, TxLike } from "./types";
@@ -87,11 +88,20 @@ export class MemoryStore implements CommerceRepo, InventoryService {
     return { ...rest, countryShippable: countries.includes(country) };
   }
   async insertCheckout(c: NewCheckout) {
+    // Backend 0005 CHECKs: payload hash required with a key; token hash is 64 lower-case hex
+    if (c.idempotencyKey && !/^[0-9a-f]{64}$/.test(c.idempotencyPayloadHash ?? "")) throw new Error("check violation: idempotency_payload_hash");
+    if (!/^[0-9a-f]{64}$/.test(c.accessTokenHash)) throw new Error("check violation: access_token_hash");
     if (c.idempotencyKey && [...this.s.checkouts.values()].some((x) => x.idempotencyKey === c.idempotencyKey)) throw new Error("unique violation: idempotency_key");
     this.s.checkouts.set(c.id, { ...c, status: "open", providerSessionId: null, createdAt: this.clock() });
   }
   async getCheckout(id: string) { return this.s.checkouts.get(id) ?? null; }
-  async getCheckoutByIdempotencyKey(key: string) { return [...this.s.checkouts.values()].find((c) => c.idempotencyKey === key) ?? null; }
+  async checkoutIdForIdempotencyKey(key: string, payloadHash: string) {
+    const c = [...this.s.checkouts.values()].find((x) => x.idempotencyKey === key);
+    if (!c) return null;
+    const a = Buffer.from(c.idempotencyPayloadHash ?? ""), b = Buffer.from(payloadHash);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) throw ApiError.idempotencyConflict();
+    return c.id;
+  }
   async setProviderSession(id: string, sessionId: string) {
     const c = this.s.checkouts.get(id)!;
     c.providerSessionId = sessionId;

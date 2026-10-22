@@ -97,4 +97,24 @@ describe("checkout/status/orders routes (memory store, sandbox)", () => {
       expect(res.status).toBe(400);
     }
   });
+
+  it("QA P2: our own response failing its schema -> 500 INTERNAL (not 400); bad request stays 400", async () => {
+    const r = await routes();
+    const { json } = await r.create();
+    const id = json.data!.checkoutId as string;
+    const tok = json.data!.accessToken as string;
+    // corrupt the stored row so the service returns a value outside the contract enum (simulated server bug)
+    const store = (globalThis as unknown as { __dyMemoryStore: { s: { checkouts: Map<string, { status: string }> } } }).__dyMemoryStore;
+    store.s.checkouts.get(id)!.status = "bogus";
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const bad = await r.getStatus(id, { bearer: tok });
+    expect(bad.res.status).toBe(500);
+    expect(bad.json.error!.code).toBe("INTERNAL");
+    expect(JSON.stringify(bad.json)).not.toContain("bogus");
+    expect(JSON.stringify(err.mock.calls)).not.toContain(tok);
+    err.mockRestore();
+    const badReq = await r.create({ items: [] });
+    expect(badReq.res.status).toBe(400);
+    expect(badReq.json.error!.code).toBe("VALIDATION_ERROR");
+  });
 });

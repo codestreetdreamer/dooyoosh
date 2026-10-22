@@ -7,6 +7,7 @@ import { releaseExpiredResponse } from "@/contracts/inventory";
 import { ApiError, withErrors } from "@/lib/errors";
 import { getPayments } from "@/server/payments/container";
 import { releaseExpiredCheckouts } from "@/server/checkout/service";
+import { respond } from "@/server/http/respond";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ const handler = withErrors(async (req: Request) => {
   if (!authorized(req)) throw ApiError.unauthorized();
   const { deps, provider } = getPayments();
   const data = await releaseExpiredCheckouts(deps, provider);
-  return Response.json(releaseExpiredResponse.parse({ data }), { headers: { "Cache-Control": "no-store" } });
+  return respond(releaseExpiredResponse, { data }, { headers: { "Cache-Control": "no-store" } });
 });
 
 export const POST = handler;

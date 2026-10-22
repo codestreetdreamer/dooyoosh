@@ -8,6 +8,7 @@ import { ApiError, withErrors } from "@/lib/errors";
 import { getPayments } from "@/server/payments/container";
 import { getCheckoutStatus } from "@/server/checkout/service";
 import { bearerToken, rejectQueryToken } from "@/server/checkout/bearer";
+import { respond } from "@/server/http/respond";
 
 export const dynamic = "force-dynamic";
 
@@ -17,5 +18,5 @@ export const GET = withErrors(async (req: Request, ctx: { params: Promise<{ chec
   const token = bearerToken(req);
   if (!token) throw ApiError.validation("Authorization: Bearer <accessToken> is required");
   const data = await getCheckoutStatus(getPayments().deps, checkoutId, token);
-  return Response.json(checkoutStatusResponse.parse({ data }), { headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+  return respond(checkoutStatusResponse, { data }, { headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 });

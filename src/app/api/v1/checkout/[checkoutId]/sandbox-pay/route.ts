@@ -10,6 +10,7 @@ import { sandboxPayRequest, sandboxPayResponse } from "@/contracts/payments";
 import { getPayments } from "@/server/payments/container";
 import { sandboxSimulatorEnabled } from "@/server/payments/sandbox-gate";
 import { simulateSandboxPayment } from "@/server/payments/sandbox";
+import { respond } from "@/server/http/respond";
 
 export const dynamic = "force-dynamic";
 const body = sandboxPayRequest.strict();
@@ -21,7 +22,7 @@ const handler = withErrors(async (req: Request, ctx: { params: Promise<{ checkou
   const { deps, provider } = getPayments();
   const results = await simulateSandboxPayment(deps, provider, checkoutId, token, outcome);
   const data = { callbacks: results.map((r) => ({ status: r.status, body: JSON.parse(r.body) as unknown })) };
-  return Response.json(sandboxPayResponse.parse({ data }), { headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+  return respond(sandboxPayResponse, { data }, { headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 });
 
 /** QA P0: closed gate -> 404 before params, body, config or DB are touched. */

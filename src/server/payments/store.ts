@@ -62,8 +62,8 @@ export interface ShippingMethodForCheckout {
 export interface NewCheckout {
   id: string;
   idempotencyKey: string | null;
-  /** hex HMAC of the canonical request payload (checkout/idempotency.ts); SCHEMA_DELTA request: checkouts.idempotency_request_hash text */
-  idempotencyRequestHash: string | null;
+  /** checkouts.idempotency_payload_hash (Backend 0005): 64 lower-case hex (checkout/idempotency.ts payloadHash); required when idempotencyKey is set */
+  idempotencyPayloadHash: string | null;
   accessTokenHash: string;
   email: string;
   phone: string | null;
@@ -176,7 +176,9 @@ export interface CommerceRepo {
   // ---- checkouts
   insertCheckout(c: NewCheckout, tx?: TxLike): Promise<void>;
   getCheckout(checkoutId: string): Promise<CheckoutRow | null>;
-  getCheckoutByIdempotencyKey(key: string): Promise<CheckoutRow | null>;
+  /** checkout_id_for_idempotency_key(key, hash) (Backend 0006): existing checkout id or null; throws
+   *  ApiError IDEMPOTENCY_CONFLICT when the stored payload hash differs. */
+  checkoutIdForIdempotencyKey(key: string, payloadHash: string): Promise<string | null>;
   setProviderSession(checkoutId: string, sessionId: string): Promise<void>;
   setCheckoutStatus(checkoutId: string, status: CheckoutStatus): Promise<void>;
   listExpiredCheckouts(now: Date, limit: number): Promise<CheckoutRow[]>;

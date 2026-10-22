@@ -4,6 +4,7 @@ import { withErrors } from "@/lib/errors";
 import { getPayments } from "@/server/payments/container";
 import { requireAdmin } from "@/server/orders/admin-auth";
 import { adminRefundOrder } from "@/server/orders/admin";
+import { respond } from "@/server/http/respond";
 
 export const dynamic = "force-dynamic";
 
@@ -13,5 +14,5 @@ export const POST = withErrors(async (req: Request, ctx: { params: Promise<{ id:
   const body = refundOrderRequest.parse(await req.json().catch(() => null));
   const { deps, providers } = getPayments();
   const r = await adminRefundOrder(deps, providers, id, body, actor);
-  return Response.json(refundOrderResponse.parse({ data: r.refund }), { status: r.created ? 201 : 200, headers: { "Cache-Control": "no-store" } });
+  return respond(refundOrderResponse, { data: r.refund }, { status: r.created ? 201 : 200, headers: { "Cache-Control": "no-store" } });
 });

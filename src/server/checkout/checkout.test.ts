@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/errors";
 import { createCheckout, getCheckoutStatus, releaseExpiredCheckouts } from "./service";
 import { deriveAccessToken, hashAccessToken } from "./token";
-import { IdempotencyConflictError } from "./idempotency";
 import { handleWebhook } from "../payments/webhooks";
 import { MOCK_SIGNATURE_HEADER, signMockPayload } from "../payments/mock";
 import { SECRET, TOKEN_SECRET, setup } from "../payments/__tests__/fixtures";
@@ -93,15 +92,17 @@ describe("createCheckout", () => {
     expect(JSON.stringify([...f.store.s.checkouts.values()])).not.toContain(a.accessToken!);
   });
 
-  it("idempotencyKey + different payload -> IdempotencyConflictError (409), nothing reserved twice", async () => {
+  it("idempotencyKey + different payload -> ApiError IDEMPOTENCY_CONFLICT (409), nothing reserved twice", async () => {
     const f = setup();
     const key = randomUUID();
     await createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key }));
     for (const over of [{ email: "other@example.com" }, { items: [{ variantId: f.v1, quantity: 1 }] }]) {
-      await expect(createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key, ...over }))).rejects.toBeInstanceOf(IdempotencyConflictError);
+      expect((await apiError(createCheckout(f.deps, f.provider, f.request({ idempotencyKey: key, ...over })))).code).toBe("IDEMPOTENCY_CONFLICT");
     }
     expect(f.store.s.checkouts.size).toBe(1);
     expect(f.store.stock(f.v1).reserved).toBe(2);
+    // Backend 0005 format: idempotency_payload_hash = 64 lower-case hex
+    expect([...f.store.s.checkouts.values()][0]!.idempotencyPayloadHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("concurrent submits with the same key: one checkout, one reservation, loser is a replay", async () => {
