@@ -141,6 +141,20 @@ export function clientEnv(): ClientEnv {
   return cachedClient;
 }
 
+/** Read-only catalog/journal routes: only DB + public vars. Does not require payment/email secrets. */
+const dbSchema = clientSchema.extend({ DATABASE_URL: z.url() });
+export type DbEnv = z.infer<typeof dbSchema>;
+let cachedDb: DbEnv | undefined;
+export function dbEnv(): DbEnv {
+  if (typeof window !== "undefined") throw new Error("dbEnv() must not be called in the browser");
+  if (!cachedDb) {
+    const r = dbSchema.safeParse(process.env);
+    if (!r.success) throw new Error(`Invalid DB environment:\n${format(r.error)}`);
+    cachedDb = r.data;
+  }
+  return cachedDb;
+}
+
 let cached: ServerEnv | undefined;
 
 /** Server-only. Throws if called in the browser or if env is invalid. */

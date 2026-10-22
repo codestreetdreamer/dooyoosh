@@ -17,7 +17,7 @@ export const cartItems = z
 export const validateCartRequest = z.object({ items: cartItems, locale: locale.default("en") });
 export type ValidateCartRequest = z.infer<typeof validateCartRequest>;
 
-export const CART_LINE_ISSUES = ["out_of_stock", "insufficient_stock", "inactive", "not_found"] as const;
+export const CART_LINE_ISSUES = ["out_of_stock", "insufficient_stock", "inactive", "unpublished", "not_found"] as const;
 
 export const validatedCartLine = z.object({
   variantId: uuid,

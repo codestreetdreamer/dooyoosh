@@ -47,6 +47,9 @@ export class ApiError extends Error {
   static countryNotShippable(country: string) {
     return new ApiError("COUNTRY_NOT_SHIPPABLE", "We do not ship to this country yet", { country });
   }
+  static idempotencyConflict(message = "Idempotency key reused with a different request") {
+    return new ApiError("IDEMPOTENCY_CONFLICT", message);
+  }
   static payment(message = "Payment provider error", details: ErrorDetails = {}) {
     return new ApiError("PAYMENT_ERROR", message, details);
   }

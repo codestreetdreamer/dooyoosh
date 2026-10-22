@@ -7,7 +7,7 @@ import { z } from "zod";
 export const uuid = z.uuid();
 export const slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(120);
 export const isoDateTime = z.iso.datetime({ offset: true });
-export const email = z.email().max(254).transform((v) => v.trim().toLowerCase());
+export const email = z.string().trim().toLowerCase().pipe(z.email().max(254));
 export const phone = z.string().regex(/^\+?[0-9 ()-]{6,20}$/);
 
 /** ISO 4217 code. Market decides which one (spec §12.3). */
@@ -58,6 +58,7 @@ export const ERROR_CODES = [
   "OUT_OF_STOCK",
   "PRICE_CHANGED",
   "COUNTRY_NOT_SHIPPABLE",
+  "IDEMPOTENCY_CONFLICT",
   "PAYMENT_ERROR",
   "INTERNAL",
 ] as const;
@@ -72,6 +73,8 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   OUT_OF_STOCK: 409,
   PRICE_CHANGED: 409,
   COUNTRY_NOT_SHIPPABLE: 422,
+  /** same idempotencyKey, different payload hash */
+  IDEMPOTENCY_CONFLICT: 409,
   PAYMENT_ERROR: 502,
   INTERNAL: 500,
 };

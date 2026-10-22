@@ -60,7 +60,7 @@ export type GetArticleResponse = z.infer<typeof getArticleResponse>;
 // ---- POST /newsletter (double opt-in). Owner: Backend & Database ----
 // Always 202 with the same body whether or not the email exists (no enumeration).
 export const newsletterSignupRequest = z.object({
-  email: z.email().max(254).transform((v) => v.trim().toLowerCase()),
+  email: z.string().trim().toLowerCase().pipe(z.email().max(254)),
   locale: locale.default("en"),
   /** honeypot; must be empty */
   website: z.string().max(0).optional(),
