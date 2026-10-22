@@ -63,7 +63,7 @@ export const endpoints = {
   shippingOptions: def({ method: "GET", path: "/shipping/options", query: shipping.shippingOptionsQuery, response: shipping.shippingOptionsResponse, owner: BD, auth: "public" }),
   createCheckout: def({ method: "POST", path: "/checkout", body: checkout.createCheckoutRequest, response: checkout.createCheckoutResponse, owner: PO, auth: "public", successStatus: 201 }),
   checkoutStatus: def({ method: "GET", path: "/checkout/{checkoutId}/status", params: orders.checkoutStatusParams, query: orders.checkoutStatusQuery, response: orders.checkoutStatusResponse, owner: PO, auth: "public" }),
-  sandboxPay: def({ method: "POST", path: "/checkout/{checkoutId}/sandbox-pay", params: payments.sandboxPayParams, query: payments.sandboxPayQuery, response: payments.sandboxPayResponse, owner: PO, auth: "public" }),
+  sandboxPay: def({ method: "POST", path: "/checkout/{checkoutId}/sandbox-pay", params: payments.sandboxPayParams, body: payments.sandboxPayRequest, response: payments.sandboxPayResponse, owner: PO, auth: "public" }),
   getOrder: def({ method: "GET", path: "/orders/{reference}", params: orders.orderParams, query: orders.getOrderQuery, response: orders.getOrderResponse, owner: PO, auth: "public" }),
   listArticles: def({ method: "GET", path: "/articles", query: journal.listArticlesQuery, response: journal.listArticlesResponse, owner: BD, auth: "public" }),
   getArticle: def({ method: "GET", path: "/articles/{slug}", params: journal.articleParams, query: journal.getArticleQuery, response: journal.getArticleResponse, owner: BD, auth: "public" }),

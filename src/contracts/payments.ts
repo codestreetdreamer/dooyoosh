@@ -177,9 +177,9 @@ export const refundSummary = z.object({
 export type RefundSummary = z.infer<typeof refundSummary>;
 
 
-// ---- POST /checkout/{checkoutId}/sandbox-pay?token=&outcome= (sandbox only; 404 when PAYMENT_MODE=live) ----
+// ---- POST /checkout/{checkoutId}/sandbox-pay, body {token, outcome} (sandbox only; 404 when PAYMENT_MODE=live) ----
 export const sandboxPayParams = z.object({ checkoutId: uuid });
-export const sandboxPayQuery = z.object({
+export const sandboxPayRequest = z.object({
   token: z.string().min(32).max(128),
   outcome: z.enum(["success", "fail"]).default("success"),
 });
