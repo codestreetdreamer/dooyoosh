@@ -36,6 +36,7 @@ export const DB_FUNCTIONS = {
   release: "release_checkout",
   releaseExpired: "release_expired_reservations",
   adjust: "adjust_stock",
+  restockOrder: "restock_order",
 } as const;
 
 export interface ReserveLine {
@@ -43,7 +44,10 @@ export interface ReserveLine {
   quantity: number;
 }
 
-export type ReserveResult = { ok: true } | { ok: false; code: "OUT_OF_STOCK"; variantIds: string[] };
+/** OUT_OF_STOCK and PRICE_CHANGED both map to 409 with details.variantIds (spec §11). */
+export type ReserveResult =
+  | { ok: true }
+  | { ok: false; code: "OUT_OF_STOCK" | "PRICE_CHANGED"; variantIds: string[] };
 
 /** Data the convert function needs to insert orders + order_items (amounts in minor units). */
 export interface ConvertOrderInput {
@@ -68,7 +72,9 @@ export interface InventoryService {
   convert(checkoutId: string, order: ConvertOrderInput, tx?: TxLike): Promise<ConvertResult>;
   release(checkoutId: string, reason: ReleaseReason, tx?: TxLike): Promise<number>;
   releaseExpired(now?: Date, limit?: number): Promise<number>;
-  adjust(input: AdjustStockInput, actorId: string): Promise<{ stockOnHand: number }>;
+  adjust(input: AdjustStockInput, actorId: string | null): Promise<{ stockOnHand: number }>;
+  /** Puts an order's items back on hand (refund / cancel-after-perform). Idempotent per order. Returns rows restocked. */
+  restockOrder(orderId: string, reason?: "return" | "cancellation", actorId?: string | null, note?: string): Promise<number>;
 }
 
 // ---- Admin: POST /admin/variants/{id}/adjust, GET /admin/variants/{id}/movements ----
