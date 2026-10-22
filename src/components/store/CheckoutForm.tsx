@@ -7,6 +7,8 @@ import { useBag } from "@/lib/store/bag";
 import { call } from "@/lib/store/data-source";
 import { apiLocale } from "@/lib/store/i18n-helpers";
 import { saveReservation } from "@/lib/store/reservation";
+import { checkoutScope, storeToken } from "@/lib/store/url-token";
+import { IdempotencyKeeper } from "@/lib/store/idempotency";
 import { EmptyState, Spinner } from "@/components/ui/States";
 import { Price } from "./Price";
 import { ReservationNotice } from "./ReservationNotice";
@@ -38,11 +40,6 @@ function fieldErrorsFromIssues(details: Record<string, unknown>, fallback: strin
   return out;
 }
 
-function newKey(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => (Number(c) ^ (Math.random() * 16) >> (Number(c) / 4)).toString(16));
-}
 
 export function CheckoutForm() {
   const t = useTranslations("checkout");
@@ -55,7 +52,7 @@ export function CheckoutForm() {
   const [methodId, setMethodId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
-  const idemKey = useRef<string>(newKey());
+  const idem = useRef(new IdempotencyKeeper());
   const bannerRef = useRef<HTMLDivElement>(null);
 
   const subtotal = bag.data?.subtotalMinor;
@@ -115,24 +112,31 @@ export function CheckoutForm() {
     if (!methodId || !bag.data) return;
     setSubmitting(true);
     const opt = (v: string) => (v.trim() ? v.trim() : undefined);
-    const res = await call("createCheckout", {
-      body: {
-        email: f.email.trim(),
-        phone: opt(f.phone),
-        locale: apiLocale(locale),
-        items: lines.map((l) => ({
-          variantId: l.variantId,
-          quantity: l.quantity,
-          expectedUnitPriceMinor: bag.data?.lines.find((x) => x.variantId === l.variantId)?.unitPriceMinor,
-        })),
-        shippingAddress: {
-          fullName: f.fullName.trim(), line1: f.line1.trim(), line2: opt(f.line2), city: f.city.trim(),
-          region: opt(f.region), postalCode: opt(f.postalCode), country: f.country, phone: opt(f.phone),
-        },
-        shippingMethodId: methodId,
-        idempotencyKey: idemKey.current,
+    const payload = {
+      email: f.email.trim(),
+      phone: opt(f.phone),
+      locale: apiLocale(locale),
+      items: lines.map((l) => ({
+        variantId: l.variantId,
+        quantity: l.quantity,
+        expectedUnitPriceMinor: bag.data?.lines.find((x) => x.variantId === l.variantId)?.unitPriceMinor,
+      })),
+      shippingAddress: {
+        fullName: f.fullName.trim(), line1: f.line1.trim(), line2: opt(f.line2), city: f.city.trim(),
+        region: opt(f.region), postalCode: opt(f.postalCode), country: f.country, phone: opt(f.phone),
       },
-    });
+      shippingMethodId: methodId,
+    };
+    const send = () => call("createCheckout", { body: { ...payload, idempotencyKey: idem.current.keyFor(payload) } });
+    let res = await send();
+    // 409 that is NOT a stock/price conflict = idempotency key reused with a different payload: new key, retry once.
+    const isKeyConflict = (r: typeof res) =>
+      !r.ok && ((r.status === 409 && r.error.code !== "OUT_OF_STOCK" && r.error.code !== "PRICE_CHANGED") ||
+        (r.status === 400 && /idempotency/i.test(r.error.message)));
+    if (isKeyConflict(res)) {
+      idem.current.reset();
+      res = await send();
+    }
     if (!res.ok) {
       setSubmitting(false);
       const code = res.error.code;
@@ -156,7 +160,7 @@ export function CheckoutForm() {
       }
       if (code === "OUT_OF_STOCK" || code === "PRICE_CHANGED") {
         // Server rejected the bag (details.variantIds): refresh prices/availability from the server and let the customer review.
-        idemKey.current = newKey();
+        idem.current.reset();
         await bag.revalidate();
       }
       requestAnimationFrame(() => bannerRef.current?.focus());
@@ -170,6 +174,8 @@ export function CheckoutForm() {
       setBanner(t("PAYMENT_ERROR"));
       return;
     }
+    // Guest token is returned once; keep it only in sessionStorage (sandbox-pay, return and order pages read it from there).
+    storeToken(checkoutScope(d.checkoutId), d.accessToken);
     saveReservation({ checkoutId: d.checkoutId, token: null, reservedUntil: d.reservedUntil, expiresAt: d.expiresAt });
     window.location.assign(url.toString());
   };

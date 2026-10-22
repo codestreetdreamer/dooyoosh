@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { useUrlToken } from "@/lib/store/url-token";
+import { checkoutScope, useStoredToken } from "@/lib/store/url-token";
 import { call } from "@/lib/store/data-source";
 import { ErrorState } from "@/components/ui/States";
 import { DemoBanner } from "@/components/layout/DemoBanner";
@@ -10,23 +10,23 @@ import { DemoBanner } from "@/components/layout/DemoBanner";
  * /{locale}/checkout/sandbox-pay?checkoutId=&token=). Calls POST /api/v1/checkout/{id}/sandbox-pay, which pushes a
  * SIGNED provider callback through the normal webhook pipeline (404 unless the sandbox gate is open), then goes to
  * the return page, which reads the result from the server. No real money moves.
- * Uses the typed `sandboxPay` endpoint (contract: token travels as a query param of the same-origin POST — never in
- * the address bar, never logged).
+ * Uses the typed `sandboxPay` endpoint (contract: token travels in the JSON body of the same-origin POST — never in a
+ * URL, never logged). Token source: sessionStorage only (accessToken saved from the POST /checkout response).
  */
 export function SandboxPay({ checkoutId, locale }: { checkoutId: string | null; locale: string }) {
-  const token = useUrlToken(checkoutId ? `checkout:${checkoutId}` : null);
+  const token = useStoredToken(checkoutId ? checkoutScope(checkoutId) : null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (token === undefined) return null;
   if (!checkoutId || !token) {
-    return <ErrorState title="Sandbox payment link is incomplete">The link is missing the checkout id or access token.</ErrorState>;
+    return <ErrorState title="Sandbox payment session not found">Open this page from the same browser tab you checked out in.</ErrorState>;
   }
 
   const pay = async (outcome: "success" | "fail") => {
     setBusy(true);
     setError(null);
-    const res = await call("sandboxPay", { params: { checkoutId }, query: { token, outcome } });
+    const res = await call("sandboxPay", { params: { checkoutId }, body: { token, outcome } });
     if (!res.ok) {
       setBusy(false);
       setError(

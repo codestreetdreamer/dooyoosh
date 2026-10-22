@@ -63,8 +63,14 @@ function uuid() {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
+/** Mirrors the real contract: guest token only via `Authorization: Bearer`. */
+function bearer(a: { headers?: Record<string, string> }): string | null {
+  const h = a.headers?.Authorization ?? a.headers?.authorization ?? "";
+  return h.startsWith("Bearer ") ? h.slice(7) : null;
+}
+
 export async function mockApi<N extends EndpointName>(name: N, args: RequestArgs<N>): Promise<ApiResult<N>> {
-  const a = args as { params?: Any; query?: Any; body?: Any; baseUrl?: string };
+  const a = args as { params?: Any; query?: Any; body?: Any; baseUrl?: string; headers?: Record<string, string> };
   const q = a.query ?? {};
   switch (name) {
     case "listCategories":
@@ -164,27 +170,28 @@ export async function mockApi<N extends EndpointName>(name: N, args: RequestArgs
       const now = Date.now();
       return ok({
         data: {
-          checkoutId, provider: "mock",
-          redirectUrl: `${origin}/${b.locale}/dev/mock-pay?checkoutId=${checkoutId}&token=${token}`,
+          checkoutId, provider: "mock", accessToken: token,
+          redirectUrl: `${origin}/${b.locale}/dev/mock-pay?checkoutId=${checkoutId}`,
           expiresAt: new Date(now + 30 * 60_000).toISOString(), reservedUntil: new Date(now + 35 * 60_000).toISOString(), totals,
         },
       }, 201);
     }
     case "checkoutStatus": {
       const c = readMock(String(a.params?.checkoutId));
-      if (!c || c.token !== q.token) return fail(404, "NOT_FOUND", "Not found");
+      if (!c || c.token !== bearer(a)) return fail(404, "NOT_FOUND", "Not found");
       return ok({ data: { checkoutStatus: c.status, orderReference: c.reference, orderStatus: c.status === "completed" ? "paid" : null } });
     }
     case "sandboxPay": {
       const c = readMock(String(a.params?.checkoutId));
-      if (!c || c.token !== q.token) return fail(404, "NOT_FOUND", "Not found");
-      mockSettle(String(a.params?.checkoutId), q.outcome === "fail" ? "failed" : "succeeded");
+      const body = (a.body ?? {}) as { token?: string; outcome?: string };
+      if (!c || c.token !== body.token) return fail(404, "NOT_FOUND", "Not found");
+      mockSettle(String(a.params?.checkoutId), body.outcome === "fail" ? "failed" : "succeeded");
       return ok({ data: { callbacks: [{ status: 200, body: { mock: true } }] } });
     }
     case "getOrder": {
       if (typeof window === "undefined") return fail(404, "NOT_FOUND", "Not found");
       const all = JSON.parse(window.localStorage.getItem(LS_KEY) ?? "{}") as Record<string, MockCheckout>;
-      const c = Object.values(all).find((x) => x.reference === a.params?.reference && x.token === q.token);
+      const c = Object.values(all).find((x) => x.reference === a.params?.reference && x.token === bearer(a));
       if (!c) return fail(404, "NOT_FOUND", "Not found");
       return ok({ data: { reference: c.reference, status: "paid", ...c.order, shipments: [], placedAt: new Date().toISOString(), paidAt: new Date().toISOString() } });
     }

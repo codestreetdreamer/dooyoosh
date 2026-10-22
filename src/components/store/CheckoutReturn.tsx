@@ -6,7 +6,8 @@ import { Link } from "@/i18n/navigation";
 import { useBag } from "@/lib/store/bag";
 import { call } from "@/lib/store/data-source";
 import { clearReservation } from "@/lib/store/reservation";
-import { storeToken, useUrlToken } from "@/lib/store/url-token";
+import { checkoutScope, orderScope, storeToken, useStoredToken } from "@/lib/store/url-token";
+import { guestAuth } from "@/lib/store/guest-auth";
 import { ErrorState, Spinner } from "@/components/ui/States";
 import { DemoBanner } from "@/components/layout/DemoBanner";
 
@@ -20,7 +21,7 @@ const MAX_POLLS = 48; // ~2 minutes, then keep the "pending" message
  */
 export function CheckoutReturn({ checkoutId }: { checkoutId: string | null }) {
   const t = useTranslations("order");
-  const token = useUrlToken(checkoutId ? `checkout:${checkoutId}` : null);
+  const token = useStoredToken(checkoutId ? checkoutScope(checkoutId) : null);
   const { clear } = useBag();
   const [state, setState] = useState<{ kind: "loading" | "ok" | "notfound" | "error"; data?: S }>({ kind: "loading" });
   const polls = useRef(0);
@@ -35,7 +36,7 @@ export function CheckoutReturn({ checkoutId }: { checkoutId: string | null }) {
     let timer: number | undefined;
     let stop = false;
     const tick = async () => {
-      const res = await call("checkoutStatus", { params: { checkoutId }, query: { token } });
+      const res = await call("checkoutStatus", { params: { checkoutId }, ...guestAuth(token) });
       if (stop) return;
       if (!res.ok) {
         setState({ kind: res.status === 404 || res.status === 400 ? "notfound" : "error" });
@@ -43,7 +44,7 @@ export function CheckoutReturn({ checkoutId }: { checkoutId: string | null }) {
       }
       const d = res.data.data;
       // Same guest token grants access to the order; keep it out of URLs (sessionStorage only).
-      if (d.orderReference) storeToken(`order:${d.orderReference}`, token);
+      if (d.orderReference) storeToken(orderScope(d.orderReference), token);
       setState({ kind: "ok", data: d });
       const settled = d.checkoutStatus === "completed" || d.checkoutStatus === "failed" || d.checkoutStatus === "expired";
       if (d.checkoutStatus === "completed" && d.orderStatus === "paid" && !cleared.current) {

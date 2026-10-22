@@ -17,7 +17,7 @@ export default async function CheckoutReturnPage({ params, searchParams }: { par
     <div className="mx-auto max-w-3xl px-4 py-16 md:py-24">
       <p className="eyebrow">{t("returnTitle")}</p>
       <div className="mt-6">
-        {/* token is read client-side, moved to sessionStorage and stripped from the URL */}
+        {/* access token comes from sessionStorage (saved at checkout); never from the URL */}
         <CheckoutReturn checkoutId={one(sp.checkoutId)} />
       </div>
     </div>

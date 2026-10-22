@@ -3,14 +3,15 @@ import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { PublicOrder } from "@/contracts/orders";
 import { call } from "@/lib/store/data-source";
-import { useUrlToken } from "@/lib/store/url-token";
+import { orderScope, useStoredToken } from "@/lib/store/url-token";
+import { guestAuth } from "@/lib/store/guest-auth";
 import { ErrorState, Spinner } from "@/components/ui/States";
 import { Price } from "./Price";
 
 /** Order status from GET /orders/{reference}?token= (server truth only). */
 export function OrderView({ reference }: { reference: string }) {
   const t = useTranslations("order");
-  const token = useUrlToken(`order:${reference}`);
+  const token = useStoredToken(orderScope(reference), { acceptHashToken: true });
   const locale = useLocale();
   const [s, setS] = useState<{ kind: "loading" | "ok" | "notfound" | "error"; order?: PublicOrder }>({ kind: "loading" });
 
@@ -20,7 +21,7 @@ export function OrderView({ reference }: { reference: string }) {
       setS({ kind: "notfound" });
       return;
     }
-    void call("getOrder", { params: { reference }, query: { token } }).then((res) => {
+    void call("getOrder", { params: { reference }, ...guestAuth(token) }).then((res) => {
       if (res.ok) setS({ kind: "ok", order: res.data.data });
       else setS({ kind: res.status === 404 || res.status === 400 ? "notfound" : "error" });
     });
