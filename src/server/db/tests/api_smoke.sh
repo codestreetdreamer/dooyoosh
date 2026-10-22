@@ -127,8 +127,9 @@ check "newsletter confirmed stays"   202 'true' POST "/newsletter" "{\"email\":\
 check "newsletter confirm 404"       404 '.error.code=="NOT_FOUND"' GET "/newsletter/confirm?token=$(printf 'x%.0s' {1..40})"
 check "newsletter confirm 400"       400 '.error.code=="VALIDATION_ERROR"' GET "/newsletter/confirm?token=short"
 # rate limit: per-email (3/h) then per-IP (10/10min) — still 202, but no further writes
-for i in $(seq 1 12); do curl -s -o /dev/null -X POST -H "$IPH" -H 'content-type: application/json' --data "{\"email\":\"rl$i-$RANDOM@example.com\"}" "$BASE/newsletter"; done
-[[ $(psqlq "select count(*) from newsletter_subscribers where email like 'rl%@example.com'") -lt 12 ]] && { pass=$((pass+1)); echo "PASS newsletter rate limit (writes capped, still 202)"; } || { fail=$((fail+1)); echo "FAIL rate limit"; }
+RUNID=$RANDOM$RANDOM
+for i in $(seq 1 12); do curl -s -o /dev/null -X POST -H "$IPH" -H 'content-type: application/json' --data "{\"email\":\"rl$RUNID-$i@example.com\"}" "$BASE/newsletter"; done
+[[ $(psqlq "select count(*) from newsletter_subscribers where email like 'rl$RUNID-%@example.com'") -lt 12 ]] && { pass=$((pass+1)); echo "PASS newsletter rate limit (writes capped, still 202)"; } || { fail=$((fail+1)); echo "FAIL rate limit"; }
 
 echo "API SMOKE: $pass passed, $fail failed"
 [[ $fail == 0 ]]
