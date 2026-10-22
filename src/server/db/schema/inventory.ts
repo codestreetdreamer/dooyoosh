@@ -30,6 +30,9 @@ export const stockReservations = pgTable("stock_reservations", {
   quantity: integer("quantity").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   status: reservationStatus("status").notNull().default("active"),
+  createdAt: createdAt(),
+  releasedAt: timestamp("released_at", { withTimezone: true }),
+  convertedAt: timestamp("converted_at", { withTimezone: true }),
 }, (t) => [
   check("stock_reservations_qty_pos", sql`${t.quantity} > 0`),
   // QA-09: one reservation row per (checkout, variant); reserve_checkout aggregates duplicate lines

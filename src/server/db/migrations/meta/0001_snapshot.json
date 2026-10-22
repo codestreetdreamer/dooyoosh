@@ -1,6 +1,6 @@
 {
-  "id": "f182fe68-7376-470e-8e48-69924f1a6b7b",
-  "prevId": "0c889984-7571-4c5d-9d9c-0b79c43cd796",
+  "id": "654d750f-6521-47e5-ad58-8179a8546811",
+  "prevId": "ce7d772c-cf6c-4628-9e08-4b505765bb2b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -151,7 +151,12 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "category_translations_locale_chk": {
+          "name": "category_translations_locale_chk",
+          "value": "\"category_translations\".\"locale\" IN ('en','uz','ru')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.product_images": {
@@ -339,9 +344,35 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "search_tsv": {
+          "name": "search_tsv",
+          "type": "tsvector",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "type": "stored",
+            "as": "to_tsvector('simple', coalesce(name,'') || ' ' || coalesce(description,'') || ' ' || coalesce(materials,''))"
+          }
         }
       },
-      "indexes": {},
+      "indexes": {
+        "product_translations_search_idx": {
+          "name": "product_translations_search_idx",
+          "columns": [
+            {
+              "expression": "search_tsv",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "gin",
+          "concurrently": false
+        }
+      },
       "foreignKeys": {
         "product_translations_product_id_products_id_fk": {
           "name": "product_translations_product_id_products_id_fk",
@@ -368,7 +399,12 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "product_translations_locale_chk": {
+          "name": "product_translations_locale_chk",
+          "value": "\"product_translations\".\"locale\" IN ('en','uz','ru')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.product_variants": {
@@ -539,6 +575,10 @@
           "name": "product_variants_price_nonneg",
           "value": "\"product_variants\".\"price_cents\" IS NULL OR \"product_variants\".\"price_cents\" >= 0"
         },
+        "product_variants_weight_nonneg": {
+          "name": "product_variants_weight_nonneg",
+          "value": "\"product_variants\".\"weight_grams\" IS NULL OR \"product_variants\".\"weight_grams\" >= 0"
+        },
         "product_variants_colour_hex_fmt": {
           "name": "product_variants_colour_hex_fmt",
           "value": "\"product_variants\".\"colour_hex\" IS NULL OR \"product_variants\".\"colour_hex\" ~ '^#[0-9A-Fa-f]{6}$'"
@@ -607,6 +647,16 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "ikpu_is_demo": {
+          "name": "ikpu_is_demo",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "type": "stored",
+            "as": "coalesce(ikpu_code LIKE 'DEMO-%', false)"
+          }
         },
         "package_code": {
           "name": "package_code",
@@ -753,7 +803,7 @@
         },
         "products_ikpu_fmt": {
           "name": "products_ikpu_fmt",
-          "value": "\"products\".\"ikpu_code\" IS NULL OR \"products\".\"ikpu_code\" ~ '^[0-9]{17}$'"
+          "value": "\"products\".\"ikpu_code\" IS NULL OR \"products\".\"ikpu_code\" ~ '^(DEMO-)?[0-9]{17}$'"
         },
         "products_vat_rate_bp_range": {
           "name": "products_vat_rate_bp_range",
@@ -762,6 +812,14 @@
         "products_published_requires_ikpu": {
           "name": "products_published_requires_ikpu",
           "value": "\"products\".\"status\" <> 'published' OR \"products\".\"ikpu_code\" IS NOT NULL"
+        },
+        "products_published_requires_published_at": {
+          "name": "products_published_requires_published_at",
+          "value": "\"products\".\"status\" <> 'published' OR \"products\".\"published_at\" IS NOT NULL"
+        },
+        "products_currency_fmt": {
+          "name": "products_currency_fmt",
+          "value": "\"products\".\"currency\" ~ '^[A-Z]{3}$'"
         }
       },
       "isRLSEnabled": false
@@ -980,6 +1038,25 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "released_at": {
+          "name": "released_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "converted_at": {
+          "name": "converted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1137,7 +1214,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "countries_iso2_fmt": {
+          "name": "countries_iso2_fmt",
+          "value": "\"countries\".\"iso2\" ~ '^[A-Z]{2}$'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.markets": {
@@ -1184,7 +1266,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "markets_currency_fmt": {
+          "name": "markets_currency_fmt",
+          "value": "\"markets\".\"currency\" ~ '^[A-Z]{3}$'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.shipping_methods": {
@@ -1354,6 +1441,14 @@
         "shipping_rates_nonneg": {
           "name": "shipping_rates_nonneg",
           "value": "\"shipping_rates\".\"price_cents\" >= 0 AND \"shipping_rates\".\"min_subtotal_cents\" >= 0"
+        },
+        "shipping_rates_free_over_nonneg": {
+          "name": "shipping_rates_free_over_nonneg",
+          "value": "\"shipping_rates\".\"free_over_cents\" IS NULL OR \"shipping_rates\".\"free_over_cents\" >= 0"
+        },
+        "shipping_rates_max_weight_pos": {
+          "name": "shipping_rates_max_weight_pos",
+          "value": "\"shipping_rates\".\"max_weight_grams\" IS NULL OR \"shipping_rates\".\"max_weight_grams\" > 0"
         }
       },
       "isRLSEnabled": false
@@ -1468,6 +1563,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "access_token_hash": {
+          "name": "access_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reserved_until": {
+          "name": "reserved_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "status": {
           "name": "status",
           "type": "checkout_status",
@@ -1484,6 +1591,13 @@
         },
         "created_at": {
           "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -1570,6 +1684,14 @@
         "checkouts_total_sum": {
           "name": "checkouts_total_sum",
           "value": "\"checkouts\".\"total_cents\" = \"checkouts\".\"subtotal_cents\" + \"checkouts\".\"shipping_cents\" + \"checkouts\".\"tax_cents\" - \"checkouts\".\"discount_cents\""
+        },
+        "checkouts_currency_fmt": {
+          "name": "checkouts_currency_fmt",
+          "value": "\"checkouts\".\"currency\" ~ '^[A-Z]{3}$'"
+        },
+        "checkouts_locale_chk": {
+          "name": "checkouts_locale_chk",
+          "value": "\"checkouts\".\"locale\" IN ('en','uz','ru')"
         }
       },
       "isRLSEnabled": false
@@ -1672,7 +1794,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "order_events_type_chk": {
+          "name": "order_events_type_chk",
+          "value": "\"order_events\".\"type\" IN ('status_changed','payment_received','payment_failed','stock_conflict','refund_requested','refund_succeeded','shipment_created','email_sent','note','stock_restocked')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.order_items": {
@@ -1739,6 +1866,16 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "ikpu_is_demo": {
+          "name": "ikpu_is_demo",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "type": "stored",
+            "as": "coalesce(ikpu_code LIKE 'DEMO-%', false)"
+          }
         },
         "unit_price_cents": {
           "name": "unit_price_cents",
@@ -1826,6 +1963,10 @@
         "order_items_qty_pos": {
           "name": "order_items_qty_pos",
           "value": "\"order_items\".\"quantity\" > 0"
+        },
+        "order_items_unit_price_nonneg": {
+          "name": "order_items_unit_price_nonneg",
+          "value": "\"order_items\".\"unit_price_cents\" >= 0"
         },
         "order_items_line_total": {
           "name": "order_items_line_total",
@@ -2073,6 +2214,14 @@
       },
       "policies": {},
       "checkConstraints": {
+        "orders_currency_fmt": {
+          "name": "orders_currency_fmt",
+          "value": "\"orders\".\"currency\" ~ '^[A-Z]{3}$'"
+        },
+        "orders_locale_chk": {
+          "name": "orders_locale_chk",
+          "value": "\"orders\".\"locale\" IN ('en','uz','ru')"
+        },
         "orders_reference_fmt": {
           "name": "orders_reference_fmt",
           "value": "\"orders\".\"reference\" ~ '^DY-[0-9]{8}-[A-Z2-7]{5}$'"
@@ -2217,6 +2366,22 @@
         }
       },
       "indexes": {
+        "payments_one_succeeded_per_order_uq": {
+          "name": "payments_one_succeeded_per_order_uq",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"payments\".\"status\" = 'succeeded'",
+          "concurrently": false
+        },
         "payments_order_idx": {
           "name": "payments_order_idx",
           "columns": [
@@ -2264,6 +2429,10 @@
         "payments_amount_nonneg": {
           "name": "payments_amount_nonneg",
           "value": "\"payments\".\"amount_cents\" >= 0"
+        },
+        "payments_currency_fmt": {
+          "name": "payments_currency_fmt",
+          "value": "\"payments\".\"currency\" ~ '^[A-Z]{3}$'"
         }
       },
       "isRLSEnabled": false
@@ -2318,8 +2487,21 @@
           "notNull": true,
           "default": "'pending'"
         },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "created_at": {
           "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -2360,6 +2542,13 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
+        "refunds_idempotency_key_unique": {
+          "name": "refunds_idempotency_key_unique",
+          "columns": [
+            "idempotency_key"
+          ],
+          "nullsNotDistinct": false
+        },
         "refunds_provider_refund_uq": {
           "name": "refunds_provider_refund_uq",
           "columns": [
@@ -2432,6 +2621,20 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
@@ -2469,7 +2672,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "shipments_tracking_url_https": {
+          "name": "shipments_tracking_url_https",
+          "value": "\"shipments\".\"tracking_url\" IS NULL OR \"shipments\".\"tracking_url\" ~ '^https://'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.article_products": {
@@ -2676,9 +2884,35 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "search_tsv": {
+          "name": "search_tsv",
+          "type": "tsvector",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "type": "stored",
+            "as": "to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(excerpt,''))"
+          }
         }
       },
-      "indexes": {},
+      "indexes": {
+        "article_translations_search_idx": {
+          "name": "article_translations_search_idx",
+          "columns": [
+            {
+              "expression": "search_tsv",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "gin",
+          "concurrently": false
+        }
+      },
       "foreignKeys": {
         "article_translations_article_id_articles_id_fk": {
           "name": "article_translations_article_id_articles_id_fk",
@@ -2705,7 +2939,12 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "article_translations_locale_chk": {
+          "name": "article_translations_locale_chk",
+          "value": "\"article_translations\".\"locale\" IN ('en','uz','ru')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.articles": {
@@ -2801,7 +3040,118 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "articles_published_requires_published_at": {
+          "name": "articles_published_requires_published_at",
+          "value": "\"articles\".\"status\" NOT IN ('published','scheduled') OR \"articles\".\"published_at\" IS NOT NULL"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.newsletter_subscribers": {
+      "name": "newsletter_subscribers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "locale": {
+          "name": "locale",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'en'"
+        },
+        "status": {
+          "name": "status",
+          "type": "newsletter_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "confirm_token_hash": {
+          "name": "confirm_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unsubscribed_at": {
+          "name": "unsubscribed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "newsletter_confirm_token_idx": {
+          "name": "newsletter_confirm_token_idx",
+          "columns": [
+            {
+              "expression": "confirm_token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "newsletter_subscribers_email_unique": {
+          "name": "newsletter_subscribers_email_unique",
+          "columns": [
+            "email"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "newsletter_email_lower": {
+          "name": "newsletter_email_lower",
+          "value": "\"newsletter_subscribers\".\"email\" = lower(\"newsletter_subscribers\".\"email\")"
+        },
+        "newsletter_locale_chk": {
+          "name": "newsletter_locale_chk",
+          "value": "\"newsletter_subscribers\".\"locale\" IN ('en','uz','ru')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.tags": {
@@ -3112,6 +3462,7 @@
         "requires_payment",
         "succeeded",
         "failed",
+        "canceled",
         "refunded",
         "partially_refunded"
       ]
@@ -3144,6 +3495,15 @@
         "scheduled",
         "published",
         "archived"
+      ]
+    },
+    "public.newsletter_status": {
+      "name": "newsletter_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "confirmed",
+        "unsubscribed"
       ]
     },
     "public.admin_role": {

@@ -1,15 +1,23 @@
 import { sql } from "drizzle-orm";
-import { bigint, char, check, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
-import { createdAt, id, updatedAt } from "./_common";
+import { bigint, char, check, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean } from "drizzle-orm/pg-core";
+import { createdAt, currencyCheck, id, localeCheck, updatedAt } from "./_common";
 import { productVariants } from "./catalog";
 import { shippingMethods } from "./markets";
+
+/** B15: fixed list of order_events.type values. */
+export const ORDER_EVENT_TYPES = [
+  "status_changed", "payment_received", "payment_failed", "stock_conflict", "refund_requested",
+  "refund_succeeded", "shipment_created", "email_sent", "note", "stock_restocked",
+] as const;
+const ORDER_EVENT_TYPES_SQL = sql.raw(`(${ORDER_EVENT_TYPES.map((t) => `'${t}'`).join(",")})`);
 
 export const checkoutStatus = pgEnum("checkout_status", ["open", "awaiting_payment", "completed", "expired", "failed"]);
 export const orderStatus = pgEnum("order_status", [
   "pending_payment", "paid", "stock_conflict", "fulfilling", "shipped", "delivered", "cancelled", "refunded", "partially_refunded",
 ]);
 export const paymentProvider = pgEnum("payment_provider", ["mock", "stripe", "payme", "click"]);
-export const paymentStatus = pgEnum("payment_status", ["requires_payment", "succeeded", "failed", "refunded", "partially_refunded"]);
+export const paymentStatus = pgEnum("payment_status", ["requires_payment", "succeeded", "failed", "canceled", "refunded", "partially_refunded"]);
 export const refundStatus = pgEnum("refund_status", ["pending", "succeeded", "failed", "canceled"]);
 export const shipmentStatus = pgEnum("shipment_status", ["label_created", "in_transit", "delivered", "exception"]);
 
@@ -33,13 +41,20 @@ export const checkouts = pgTable("checkouts", {
   totalCents: bigint("total_cents", { mode: "number" }).notNull(),
   provider: paymentProvider("provider").notNull(),
   providerSessionId: text("provider_session_id"),
+  // B1: sha256 hex of the guest token minted at checkout; copied to orders.access_token_hash on convert
+  accessTokenHash: text("access_token_hash").notNull(),
+  // stock reservation expiry (35 min), set by reserve_checkout(); expires_at = provider session (30 min)
+  reservedUntil: timestamp("reserved_until", { withTimezone: true }),
   status: checkoutStatus("status").notNull().default("open"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: createdAt(),
+  updatedAt: updatedAt(),
 }, (t) => [
   check("checkouts_totals_nonneg", sql`${t.subtotalCents} >= 0 AND ${t.shippingCents} >= 0 AND ${t.taxCents} >= 0 AND ${t.discountCents} >= 0 AND ${t.totalCents} >= 0`),
   check("checkouts_total_sum", sql`${t.totalCents} = ${t.subtotalCents} + ${t.shippingCents} + ${t.taxCents} - ${t.discountCents}`),
   unique("checkouts_provider_session_uq").on(t.provider, t.providerSessionId),
+  check("checkouts_currency_fmt", currencyCheck(t.currency)),
+  check("checkouts_locale_chk", localeCheck(t.locale)),
   index("checkouts_status_expires_idx").on(t.status, t.expiresAt),
   index("checkouts_shipping_method_idx").on(t.shippingMethodId),
 ]);
@@ -67,6 +82,8 @@ export const orders = pgTable("orders", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [
+  check("orders_currency_fmt", currencyCheck(t.currency)),
+  check("orders_locale_chk", localeCheck(t.locale)),
   check("orders_reference_fmt", sql`${t.reference} ~ '^DY-[0-9]{8}-[A-Z2-7]{5}$'`),
   check("orders_total_sum", sql`${t.totalCents} = ${t.subtotalCents} + ${t.shippingCents} + ${t.taxCents} - ${t.discountCents}`),
   check("orders_totals_nonneg", sql`${t.subtotalCents} >= 0 AND ${t.shippingCents} >= 0 AND ${t.taxCents} >= 0 AND ${t.discountCents} >= 0 AND ${t.totalCents} >= 0`),
@@ -87,11 +104,13 @@ export const orderItems = pgTable("order_items", {
   ikpuCode: text("ikpu_code"),
   packageCode: text("package_code"),
   vatRateBp: integer("vat_rate_bp").notNull(),
+  ikpuIsDemo: boolean("ikpu_is_demo").generatedAlwaysAs(sql`coalesce(ikpu_code LIKE 'DEMO-%', false)`),
   unitPriceCents: bigint("unit_price_cents", { mode: "number" }).notNull(),
   quantity: integer("quantity").notNull(),
   lineTotalCents: bigint("line_total_cents", { mode: "number" }).notNull(),
 }, (t) => [
   check("order_items_qty_pos", sql`${t.quantity} > 0`),
+  check("order_items_unit_price_nonneg", sql`${t.unitPriceCents} >= 0`),
   check("order_items_line_total", sql`${t.lineTotalCents} = ${t.unitPriceCents} * ${t.quantity}`),
   index("order_items_order_idx").on(t.orderId),
   index("order_items_variant_idx").on(t.variantId),
@@ -106,7 +125,10 @@ export const orderEvents = pgTable("order_events", {
   payload: jsonb("payload"),
   actorId: uuid("actor_id"),
   createdAt: createdAt(),
-}, (t) => [index("order_events_order_idx").on(t.orderId, t.createdAt)]);
+}, (t) => [
+  index("order_events_order_idx").on(t.orderId, t.createdAt),
+  check("order_events_type_chk", sql`${t.type} IN ${ORDER_EVENT_TYPES_SQL}`),
+]);
 
 export const payments = pgTable("payments", {
   id: id(),
@@ -121,6 +143,9 @@ export const payments = pgTable("payments", {
 }, (t) => [
   check("payments_amount_nonneg", sql`${t.amountCents} >= 0`),
   unique("payments_provider_payment_uq").on(t.provider, t.providerPaymentId),
+  check("payments_currency_fmt", currencyCheck(t.currency)),
+  // B16: at most one succeeded payment per order
+  uniqueIndex("payments_one_succeeded_per_order_uq").on(t.orderId).where(sql`${t.status} = 'succeeded'`),
   index("payments_order_idx").on(t.orderId),
 ]);
 
@@ -132,7 +157,10 @@ export const refunds = pgTable("refunds", {
   reason: text("reason"),
   providerRefundId: text("provider_refund_id"),
   status: refundStatus("status").notNull().default("pending"),
+  // B9: admin refund request idempotency
+  idempotencyKey: uuid("idempotency_key").notNull().unique(),
   createdAt: createdAt(),
+  updatedAt: updatedAt(),
 }, (t) => [
   check("refunds_amount_pos", sql`${t.amountCents} > 0`),
   // QA-11: provider refund ids are unique per provider, not globally
@@ -149,7 +177,12 @@ export const shipments = pgTable("shipments", {
   status: shipmentStatus("status").notNull().default("label_created"),
   shippedAt: timestamp("shipped_at", { withTimezone: true }),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
-}, (t) => [index("shipments_order_idx").on(t.orderId)]);
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index("shipments_order_idx").on(t.orderId),
+  check("shipments_tracking_url_https", sql`${t.trackingUrl} IS NULL OR ${t.trackingUrl} ~ '^https://'`),
+]);
 
 // Idempotency for provider webhooks/callbacks (Stripe, Payme JSON-RPC, Click Prepare/Complete).
 // Insert ... on conflict do nothing => already handled. See record_payment_event().

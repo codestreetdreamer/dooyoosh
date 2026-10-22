@@ -1,5 +1,5 @@
 -- 0001_security_core (hand-written, drizzle-kit --custom). Owner: Backend & Database.
--- Supabase hardening, auth.users FKs, triggers (updated_at, append-only ledger, stock guard), admin helper.
+-- Supabase hardening, auth.users FKs, triggers (updated_at, append-only ledger), admin helper, profile bootstrap.
 
 -- 1. Private schema for helpers that RLS policies call. Not exposed through the Data API.
 create schema if not exists app_private;
@@ -25,11 +25,18 @@ begin
   new.updated_at := now();
   return new;
 end $$;
-create trigger products_set_updated_at before update on public.products for each row execute function app_private.set_updated_at();
-create trigger product_variants_set_updated_at before update on public.product_variants for each row execute function app_private.set_updated_at();
-create trigger orders_set_updated_at before update on public.orders for each row execute function app_private.set_updated_at();
-create trigger articles_set_updated_at before update on public.articles for each row execute function app_private.set_updated_at();
-create trigger profiles_set_updated_at before update on public.profiles for each row execute function app_private.set_updated_at();
+-- B13: attach to EVERY public table that has an updated_at column
+do $$
+declare r record;
+begin
+  for r in select c.table_name from information_schema.columns c
+           join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name
+           where c.table_schema = 'public' and c.column_name = 'updated_at' and t.table_type = 'BASE TABLE'
+  loop
+    execute format('create trigger %I before update on public.%I for each row execute function app_private.set_updated_at()',
+                   r.table_name || '_set_updated_at', r.table_name);
+  end loop;
+end $$;
 
 -- 5. inventory_movements is append-only.
 --    Single exception: the DEMO cleanup script may delete ledger rows of DEMO- variants when it sets

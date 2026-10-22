@@ -5,15 +5,36 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1792710353586,
+      "when": 1792711176590,
       "tag": "0000_init",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1792710354274,
+      "when": 1792711177287,
       "tag": "0001_security_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792711178034,
+      "tag": "0002_stock_order_functions",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792711178753,
+      "tag": "0003_rls_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792711179577,
+      "tag": "0004_storage_media",
       "breakpoints": true
     }
   ]

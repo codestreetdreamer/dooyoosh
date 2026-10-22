@@ -6,10 +6,11 @@ CREATE TYPE "public"."stock_reservation_status" AS ENUM('active', 'converted', '
 CREATE TYPE "public"."checkout_status" AS ENUM('open', 'awaiting_payment', 'completed', 'expired', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."order_status" AS ENUM('pending_payment', 'paid', 'stock_conflict', 'fulfilling', 'shipped', 'delivered', 'cancelled', 'refunded', 'partially_refunded');--> statement-breakpoint
 CREATE TYPE "public"."payment_provider" AS ENUM('mock', 'stripe', 'payme', 'click');--> statement-breakpoint
-CREATE TYPE "public"."payment_status" AS ENUM('requires_payment', 'succeeded', 'failed', 'refunded', 'partially_refunded');--> statement-breakpoint
+CREATE TYPE "public"."payment_status" AS ENUM('requires_payment', 'succeeded', 'failed', 'canceled', 'refunded', 'partially_refunded');--> statement-breakpoint
 CREATE TYPE "public"."refund_status" AS ENUM('pending', 'succeeded', 'failed', 'canceled');--> statement-breakpoint
 CREATE TYPE "public"."shipment_status" AS ENUM('label_created', 'in_transit', 'delivered', 'exception');--> statement-breakpoint
 CREATE TYPE "public"."article_status" AS ENUM('draft', 'scheduled', 'published', 'archived');--> statement-breakpoint
+CREATE TYPE "public"."newsletter_status" AS ENUM('pending', 'confirmed', 'unsubscribed');--> statement-breakpoint
 CREATE TYPE "public"."admin_role" AS ENUM('owner', 'editor', 'fulfilment');--> statement-breakpoint
 CREATE TABLE "categories" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -26,7 +27,8 @@ CREATE TABLE "category_translations" (
 	"locale" text NOT NULL,
 	"name" text NOT NULL,
 	"description" text,
-	CONSTRAINT "category_translations_category_id_locale_pk" PRIMARY KEY("category_id","locale")
+	CONSTRAINT "category_translations_category_id_locale_pk" PRIMARY KEY("category_id","locale"),
+	CONSTRAINT "category_translations_locale_chk" CHECK ("category_translations"."locale" IN ('en','uz','ru'))
 );
 --> statement-breakpoint
 CREATE TABLE "product_images" (
@@ -50,7 +52,9 @@ CREATE TABLE "product_translations" (
 	"fit_notes" text,
 	"seo_title" text,
 	"seo_description" text,
-	CONSTRAINT "product_translations_product_id_locale_pk" PRIMARY KEY("product_id","locale")
+	"search_tsv" "tsvector" GENERATED ALWAYS AS (to_tsvector('simple', coalesce(name,'') || ' ' || coalesce(description,'') || ' ' || coalesce(materials,''))) STORED,
+	CONSTRAINT "product_translations_product_id_locale_pk" PRIMARY KEY("product_id","locale"),
+	CONSTRAINT "product_translations_locale_chk" CHECK ("product_translations"."locale" IN ('en','uz','ru'))
 );
 --> statement-breakpoint
 CREATE TABLE "product_variants" (
@@ -74,6 +78,7 @@ CREATE TABLE "product_variants" (
 	CONSTRAINT "product_variants_reserved_nonneg" CHECK ("product_variants"."stock_reserved" >= 0),
 	CONSTRAINT "product_variants_reserved_le_on_hand" CHECK ("product_variants"."stock_reserved" <= "product_variants"."stock_on_hand"),
 	CONSTRAINT "product_variants_price_nonneg" CHECK ("product_variants"."price_cents" IS NULL OR "product_variants"."price_cents" >= 0),
+	CONSTRAINT "product_variants_weight_nonneg" CHECK ("product_variants"."weight_grams" IS NULL OR "product_variants"."weight_grams" >= 0),
 	CONSTRAINT "product_variants_colour_hex_fmt" CHECK ("product_variants"."colour_hex" IS NULL OR "product_variants"."colour_hex" ~ '^#[0-9A-Fa-f]{6}$')
 );
 --> statement-breakpoint
@@ -87,6 +92,7 @@ CREATE TABLE "products" (
 	"currency" char(3) NOT NULL,
 	"size_system" "size_system" NOT NULL,
 	"ikpu_code" text,
+	"ikpu_is_demo" boolean GENERATED ALWAYS AS (coalesce(ikpu_code LIKE 'DEMO-%', false)) STORED,
 	"package_code" text,
 	"vat_rate_bp" integer DEFAULT 1200 NOT NULL,
 	"size_chart_id" uuid,
@@ -96,9 +102,11 @@ CREATE TABLE "products" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "products_slug_unique" UNIQUE("slug"),
 	CONSTRAINT "products_base_price_nonneg" CHECK ("products"."base_price_cents" >= 0),
-	CONSTRAINT "products_ikpu_fmt" CHECK ("products"."ikpu_code" IS NULL OR "products"."ikpu_code" ~ '^[0-9]{17}$'),
+	CONSTRAINT "products_ikpu_fmt" CHECK ("products"."ikpu_code" IS NULL OR "products"."ikpu_code" ~ '^(DEMO-)?[0-9]{17}$'),
 	CONSTRAINT "products_vat_rate_bp_range" CHECK ("products"."vat_rate_bp" >= 0 AND "products"."vat_rate_bp" <= 10000),
-	CONSTRAINT "products_published_requires_ikpu" CHECK ("products"."status" <> 'published' OR "products"."ikpu_code" IS NOT NULL)
+	CONSTRAINT "products_published_requires_ikpu" CHECK ("products"."status" <> 'published' OR "products"."ikpu_code" IS NOT NULL),
+	CONSTRAINT "products_published_requires_published_at" CHECK ("products"."status" <> 'published' OR "products"."published_at" IS NOT NULL),
+	CONSTRAINT "products_currency_fmt" CHECK ("products"."currency" ~ '^[A-Z]{3}$')
 );
 --> statement-breakpoint
 CREATE TABLE "size_charts" (
@@ -127,6 +135,9 @@ CREATE TABLE "stock_reservations" (
 	"quantity" integer NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
 	"status" "stock_reservation_status" DEFAULT 'active' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"released_at" timestamp with time zone,
+	"converted_at" timestamp with time zone,
 	CONSTRAINT "stock_reservations_checkout_variant_uq" UNIQUE("checkout_id","variant_id"),
 	CONSTRAINT "stock_reservations_qty_pos" CHECK ("stock_reservations"."quantity" > 0)
 );
@@ -134,7 +145,8 @@ CREATE TABLE "stock_reservations" (
 CREATE TABLE "countries" (
 	"iso2" char(2) PRIMARY KEY NOT NULL,
 	"market_id" uuid NOT NULL,
-	"is_shippable" boolean DEFAULT false NOT NULL
+	"is_shippable" boolean DEFAULT false NOT NULL,
+	CONSTRAINT "countries_iso2_fmt" CHECK ("countries"."iso2" ~ '^[A-Z]{2}$')
 );
 --> statement-breakpoint
 CREATE TABLE "markets" (
@@ -142,7 +154,8 @@ CREATE TABLE "markets" (
 	"code" text NOT NULL,
 	"currency" char(3) NOT NULL,
 	"is_active" boolean DEFAULT false NOT NULL,
-	CONSTRAINT "markets_code_unique" UNIQUE("code")
+	CONSTRAINT "markets_code_unique" UNIQUE("code"),
+	CONSTRAINT "markets_currency_fmt" CHECK ("markets"."currency" ~ '^[A-Z]{3}$')
 );
 --> statement-breakpoint
 CREATE TABLE "shipping_methods" (
@@ -164,7 +177,9 @@ CREATE TABLE "shipping_rates" (
 	"max_weight_grams" integer,
 	"price_cents" bigint NOT NULL,
 	"free_over_cents" bigint,
-	CONSTRAINT "shipping_rates_nonneg" CHECK ("shipping_rates"."price_cents" >= 0 AND "shipping_rates"."min_subtotal_cents" >= 0)
+	CONSTRAINT "shipping_rates_nonneg" CHECK ("shipping_rates"."price_cents" >= 0 AND "shipping_rates"."min_subtotal_cents" >= 0),
+	CONSTRAINT "shipping_rates_free_over_nonneg" CHECK ("shipping_rates"."free_over_cents" IS NULL OR "shipping_rates"."free_over_cents" >= 0),
+	CONSTRAINT "shipping_rates_max_weight_pos" CHECK ("shipping_rates"."max_weight_grams" IS NULL OR "shipping_rates"."max_weight_grams" > 0)
 );
 --> statement-breakpoint
 CREATE TABLE "checkouts" (
@@ -185,13 +200,18 @@ CREATE TABLE "checkouts" (
 	"total_cents" bigint NOT NULL,
 	"provider" "payment_provider" NOT NULL,
 	"provider_session_id" text,
+	"access_token_hash" text NOT NULL,
+	"reserved_until" timestamp with time zone,
 	"status" "checkout_status" DEFAULT 'open' NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "checkouts_idempotency_key_unique" UNIQUE("idempotency_key"),
 	CONSTRAINT "checkouts_provider_session_uq" UNIQUE("provider","provider_session_id"),
 	CONSTRAINT "checkouts_totals_nonneg" CHECK ("checkouts"."subtotal_cents" >= 0 AND "checkouts"."shipping_cents" >= 0 AND "checkouts"."tax_cents" >= 0 AND "checkouts"."discount_cents" >= 0 AND "checkouts"."total_cents" >= 0),
-	CONSTRAINT "checkouts_total_sum" CHECK ("checkouts"."total_cents" = "checkouts"."subtotal_cents" + "checkouts"."shipping_cents" + "checkouts"."tax_cents" - "checkouts"."discount_cents")
+	CONSTRAINT "checkouts_total_sum" CHECK ("checkouts"."total_cents" = "checkouts"."subtotal_cents" + "checkouts"."shipping_cents" + "checkouts"."tax_cents" - "checkouts"."discount_cents"),
+	CONSTRAINT "checkouts_currency_fmt" CHECK ("checkouts"."currency" ~ '^[A-Z]{3}$'),
+	CONSTRAINT "checkouts_locale_chk" CHECK ("checkouts"."locale" IN ('en','uz','ru'))
 );
 --> statement-breakpoint
 CREATE TABLE "order_events" (
@@ -202,7 +222,8 @@ CREATE TABLE "order_events" (
 	"to_status" "order_status",
 	"payload" jsonb,
 	"actor_id" uuid,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "order_events_type_chk" CHECK ("order_events"."type" IN ('status_changed','payment_received','payment_failed','stock_conflict','refund_requested','refund_succeeded','shipment_created','email_sent','note','stock_restocked'))
 );
 --> statement-breakpoint
 CREATE TABLE "order_items" (
@@ -216,10 +237,12 @@ CREATE TABLE "order_items" (
 	"ikpu_code" text,
 	"package_code" text,
 	"vat_rate_bp" integer NOT NULL,
+	"ikpu_is_demo" boolean GENERATED ALWAYS AS (coalesce(ikpu_code LIKE 'DEMO-%', false)) STORED,
 	"unit_price_cents" bigint NOT NULL,
 	"quantity" integer NOT NULL,
 	"line_total_cents" bigint NOT NULL,
 	CONSTRAINT "order_items_qty_pos" CHECK ("order_items"."quantity" > 0),
+	CONSTRAINT "order_items_unit_price_nonneg" CHECK ("order_items"."unit_price_cents" >= 0),
 	CONSTRAINT "order_items_line_total" CHECK ("order_items"."line_total_cents" = "order_items"."unit_price_cents" * "order_items"."quantity")
 );
 --> statement-breakpoint
@@ -247,6 +270,8 @@ CREATE TABLE "orders" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "orders_reference_unique" UNIQUE("reference"),
 	CONSTRAINT "orders_checkout_id_unique" UNIQUE("checkout_id"),
+	CONSTRAINT "orders_currency_fmt" CHECK ("orders"."currency" ~ '^[A-Z]{3}$'),
+	CONSTRAINT "orders_locale_chk" CHECK ("orders"."locale" IN ('en','uz','ru')),
 	CONSTRAINT "orders_reference_fmt" CHECK ("orders"."reference" ~ '^DY-[0-9]{8}-[A-Z2-7]{5}$'),
 	CONSTRAINT "orders_total_sum" CHECK ("orders"."total_cents" = "orders"."subtotal_cents" + "orders"."shipping_cents" + "orders"."tax_cents" - "orders"."discount_cents"),
 	CONSTRAINT "orders_totals_nonneg" CHECK ("orders"."subtotal_cents" >= 0 AND "orders"."shipping_cents" >= 0 AND "orders"."tax_cents" >= 0 AND "orders"."discount_cents" >= 0 AND "orders"."total_cents" >= 0)
@@ -274,7 +299,8 @@ CREATE TABLE "payments" (
 	"raw" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "payments_provider_payment_uq" UNIQUE("provider","provider_payment_id"),
-	CONSTRAINT "payments_amount_nonneg" CHECK ("payments"."amount_cents" >= 0)
+	CONSTRAINT "payments_amount_nonneg" CHECK ("payments"."amount_cents" >= 0),
+	CONSTRAINT "payments_currency_fmt" CHECK ("payments"."currency" ~ '^[A-Z]{3}$')
 );
 --> statement-breakpoint
 CREATE TABLE "refunds" (
@@ -285,7 +311,10 @@ CREATE TABLE "refunds" (
 	"reason" text,
 	"provider_refund_id" text,
 	"status" "refund_status" DEFAULT 'pending' NOT NULL,
+	"idempotency_key" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "refunds_idempotency_key_unique" UNIQUE("idempotency_key"),
 	CONSTRAINT "refunds_provider_refund_uq" UNIQUE("provider","provider_refund_id"),
 	CONSTRAINT "refunds_amount_pos" CHECK ("refunds"."amount_cents" > 0)
 );
@@ -298,7 +327,10 @@ CREATE TABLE "shipments" (
 	"tracking_url" text,
 	"status" "shipment_status" DEFAULT 'label_created' NOT NULL,
 	"shipped_at" timestamp with time zone,
-	"delivered_at" timestamp with time zone
+	"delivered_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "shipments_tracking_url_https" CHECK ("shipments"."tracking_url" IS NULL OR "shipments"."tracking_url" ~ '^https://')
 );
 --> statement-breakpoint
 CREATE TABLE "article_products" (
@@ -322,7 +354,9 @@ CREATE TABLE "article_translations" (
 	"body" jsonb NOT NULL,
 	"seo_title" text,
 	"seo_description" text,
-	CONSTRAINT "article_translations_article_id_locale_pk" PRIMARY KEY("article_id","locale")
+	"search_tsv" "tsvector" GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(excerpt,''))) STORED,
+	CONSTRAINT "article_translations_article_id_locale_pk" PRIMARY KEY("article_id","locale"),
+	CONSTRAINT "article_translations_locale_chk" CHECK ("article_translations"."locale" IN ('en','uz','ru'))
 );
 --> statement-breakpoint
 CREATE TABLE "articles" (
@@ -334,7 +368,23 @@ CREATE TABLE "articles" (
 	"published_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "articles_slug_unique" UNIQUE("slug")
+	CONSTRAINT "articles_slug_unique" UNIQUE("slug"),
+	CONSTRAINT "articles_published_requires_published_at" CHECK ("articles"."status" NOT IN ('published','scheduled') OR "articles"."published_at" IS NOT NULL)
+);
+--> statement-breakpoint
+CREATE TABLE "newsletter_subscribers" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"email" text NOT NULL,
+	"locale" text DEFAULT 'en' NOT NULL,
+	"status" "newsletter_status" DEFAULT 'pending' NOT NULL,
+	"confirm_token_hash" text,
+	"confirmed_at" timestamp with time zone,
+	"unsubscribed_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "newsletter_subscribers_email_unique" UNIQUE("email"),
+	CONSTRAINT "newsletter_email_lower" CHECK ("newsletter_subscribers"."email" = lower("newsletter_subscribers"."email")),
+	CONSTRAINT "newsletter_locale_chk" CHECK ("newsletter_subscribers"."locale" IN ('en','uz','ru'))
 );
 --> statement-breakpoint
 CREATE TABLE "tags" (
@@ -400,6 +450,7 @@ ALTER TABLE "article_translations" ADD CONSTRAINT "article_translations_article_
 CREATE INDEX "categories_parent_idx" ON "categories" USING btree ("parent_id");--> statement-breakpoint
 CREATE INDEX "product_images_product_idx" ON "product_images" USING btree ("product_id","sort_order");--> statement-breakpoint
 CREATE INDEX "product_images_variant_idx" ON "product_images" USING btree ("variant_id");--> statement-breakpoint
+CREATE INDEX "product_translations_search_idx" ON "product_translations" USING gin ("search_tsv");--> statement-breakpoint
 CREATE INDEX "product_variants_product_idx" ON "product_variants" USING btree ("product_id");--> statement-breakpoint
 CREATE INDEX "products_category_status_idx" ON "products" USING btree ("category_id","status");--> statement-breakpoint
 CREATE INDEX "products_published_at_idx" ON "products" USING btree ("published_at");--> statement-breakpoint
@@ -419,11 +470,14 @@ CREATE INDEX "order_items_variant_idx" ON "order_items" USING btree ("variant_id
 CREATE INDEX "orders_status_idx" ON "orders" USING btree ("status","created_at");--> statement-breakpoint
 CREATE INDEX "orders_email_idx" ON "orders" USING btree ("email");--> statement-breakpoint
 CREATE INDEX "orders_shipping_method_idx" ON "orders" USING btree ("shipping_method_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "payments_one_succeeded_per_order_uq" ON "payments" USING btree ("order_id") WHERE "payments"."status" = 'succeeded';--> statement-breakpoint
 CREATE INDEX "payments_order_idx" ON "payments" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "refunds_payment_idx" ON "refunds" USING btree ("payment_id");--> statement-breakpoint
 CREATE INDEX "shipments_order_idx" ON "shipments" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "article_products_product_idx" ON "article_products" USING btree ("product_id");--> statement-breakpoint
 CREATE INDEX "article_tags_tag_idx" ON "article_tags" USING btree ("tag_id");--> statement-breakpoint
+CREATE INDEX "article_translations_search_idx" ON "article_translations" USING gin ("search_tsv");--> statement-breakpoint
 CREATE INDEX "articles_status_published_idx" ON "articles" USING btree ("status","published_at");--> statement-breakpoint
+CREATE INDEX "newsletter_confirm_token_idx" ON "newsletter_subscribers" USING btree ("confirm_token_hash");--> statement-breakpoint
 CREATE INDEX "audit_log_entity_idx" ON "audit_log" USING btree ("entity","entity_id");--> statement-breakpoint
 CREATE INDEX "audit_log_created_idx" ON "audit_log" USING btree ("created_at");
