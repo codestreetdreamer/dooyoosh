@@ -31,6 +31,8 @@ const serverSchema = clientSchema
     PAYMENT_PROVIDER: z.enum(PAYMENT_PROVIDERS).default("mock"),
     /** sandbox = test credentials/hosts; only the exact string "live" moves real money */
     PAYMENT_MODE: z.enum(["sandbox", "live"]).default("sandbox"),
+    /** MVP demo deploy only: lets the mock provider run on a production build. Never with PAYMENT_MODE=live. */
+    ALLOW_MOCK_IN_PRODUCTION: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
     PAYMENT_WEBHOOK_SECRET: optionalSecret,
     STRIPE_SECRET_KEY: optionalSecret,
     PAYME_MERCHANT_ID: optionalSecret,
@@ -56,8 +58,8 @@ const serverSchema = clientSchema
       }
     };
     if (env.NODE_ENV === "production") {
-      if (env.PAYMENT_PROVIDER === "mock") {
-        ctx.addIssue({ code: "custom", path: ["PAYMENT_PROVIDER"], message: "mock is not allowed in production" });
+      if (env.PAYMENT_PROVIDER === "mock" && !(env.PAYMENT_MODE === "sandbox" && env.ALLOW_MOCK_IN_PRODUCTION)) {
+        ctx.addIssue({ code: "custom", path: ["PAYMENT_PROVIDER"], message: "mock in production requires PAYMENT_MODE=sandbox and ALLOW_MOCK_IN_PRODUCTION=true (MVP demo only)" });
       }
       need(["RESEND_API_KEY"], "NODE_ENV=production");
       if (env.PAYMENTS_STORE === "memory") {
