@@ -277,5 +277,34 @@ begin
 end $$;
 reset role;
 
+-- 0007 (QA P3): nobody but owner/editor can LIST product-images objects; bucket stays public for URL downloads
+insert into storage.objects (bucket_id, name) values ('product-images', 'rlstest/listing.jpg');
+do $$ begin
+  if not (select public from storage.buckets where id = 'product-images') then
+    raise exception 'FAIL: product-images must stay a public bucket (public URLs)'; end if;
+end $$;
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+do $$ begin
+  if (select count(*) from storage.objects where bucket_id = 'product-images') <> 0 then
+    raise exception 'FAIL: anon can list product-images objects'; end if;
+end $$;
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000b1","role":"authenticated"}', true);
+do $$ begin
+  if (select count(*) from storage.objects where bucket_id = 'product-images') <> 0 then
+    raise exception 'FAIL: customer can list product-images objects'; end if;
+end $$;
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-8000-0000000000a1","role":"authenticated"}', true);
+do $$ begin
+  if (select count(*) from storage.objects where bucket_id = 'product-images' and name = 'rlstest/listing.jpg') <> 1 then
+    raise exception 'FAIL: owner cannot list product-images (media library)'; end if;
+  raise notice 'PASS storage: anon/customer cannot list product-images, owner/editor can; bucket public';
+end $$;
+reset role;
+
 do $$ begin raise notice 'ALL RLS TESTS PASSED'; end $$;
 rollback;

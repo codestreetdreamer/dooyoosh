@@ -23,6 +23,7 @@ Folder `src/server/db/migrations/`, journal `meta/_journal.json`. Apply **in thi
 | `0004_storage_media.sql` | hand-written | Storage bucket `product-images` + policies |
 | `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default; CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` (checkouts, orders); `checkouts.idempotency_payload_hash` (64-hex, required when `idempotency_key` set); `provider_transactions.seq` (bigint identity) + `provider_time` (bigint ms, nullable, index `(provider, provider_time)`, UNIQUE `(provider, seq)`); `refunds.idempotency_key` uuid → **text** (NOT NULL UNIQUE, 1..200). applied to staging after QA green |
 | `0006_convert_no_vat_fallback.sql` | hand-written (incremental) | `convert_checkout_to_order` modes `record`/`abort` (abort returns `aborted`, writes nothing), no 1200 VAT fallback; `reserve_checkout(…, p_payload_hash)`; `checkout_id_for_idempotency_key()`. applied to staging after QA green |
+| `0007_storage_no_public_list.sql` | hand-written (incremental) | QA P3: drops the anon/authenticated SELECT policy on `storage.objects` for `product-images` (no public listing); adds owner/editor-only SELECT (admin media library). Public URL downloads unaffected. **Local only until QA green** |
 
 Staging `bmigqxmswskihqrkeezh` has 0000–0006 (0000–0004 applied 2026-10-22 23:24, 0005/0006 at 23:47 UTC after QA green on a4e2c69). Later migrations go to staging only after QA green.
 
@@ -30,7 +31,7 @@ Workflow:
 1. Edit `src/server/db/schema/*.ts` → `pnpm db:generate` (new numbered file). Hand-written SQL: `pnpm drizzle-kit generate --custom --name <name>`.
 2. Test locally: `src/server/db/tests/run-all.sh` (see §7).
 3. Apply: `pnpm db:migrate` with `DATABASE_URL`, or the Supabase MCP `apply_migration` with the same names (as done for staging).
-4. Never edit a migration that has been applied to Supabase; add a new one (0000–0004 are frozen). From 0005 on, generation is incremental.
+4. Never edit a migration that has been applied to Supabase; add a new one (0000–0006 are frozen: applied to staging). From 0005 on, generation is incremental.
 5. Staging gets new migrations only after QA gives green.
 
 Supabase-specific: migrations run as `postgres` (table owner). The 0001/0003 grants **revoke Supabase's default ALL grants** from `anon`/`authenticated`; new tables are not exposed until a later migration grants them.
@@ -62,7 +63,7 @@ Errors are `RAISE EXCEPTION '<CODE>' USING ERRCODE = 'P0001', DETAIL = <json>`; 
 - `p_items = [{"variant_id": uuid, "quantity": 1..10}]`, no duplicates, must equal the snapshot lines (else `VALIDATION_ERROR`).
 - Locks variants `ORDER BY id`, re-checks: variant active, product published/not archived/`published_at <= now()`, product currency = checkout currency, snapshot price = DB price (`PRICE_CHANGED`), stock (`OUT_OF_STOCK`). Then `stock_reserved += q` (spec §4 conditional UPDATE) and inserts `stock_reservations` (expires_at = `p_expires_at`, use now + 35 min), sets `checkouts.reserved_until = p_expires_at`.
 - **Idempotent**: calling again for the same checkout with the same lines while reservations are active is a no-op.
-- **`idempotencyKey`** (contract `createCheckoutRequest.idempotencyKey`): `checkouts.idempotency_key uuid UNIQUE NULL` + `idempotency_payload_hash` (lower-case hex sha256 of the canonical request payload, computed by Payments; required when the key is set). Race-safe pattern in ONE transaction: `INSERT INTO checkouts (..., idempotency_key, idempotency_payload_hash) ... ON CONFLICT (idempotency_key) DO NOTHING;` → `checkout_id_for_idempotency_key(key, hash)` (returns the id; raises `IDEMPOTENCY_CONFLICT` if the stored hash differs → API 409) → `reserve_checkout(id, items, expires, hash)` (no-op on repeat; also checks the hash) → return the existing checkout. Tested with 10 parallel submits (1 checkout, 1 reservation) + a different-payload submit (IDEMPOTENCY_CONFLICT). TS: `inventory.checkoutIdForIdempotencyKey()`, `inventory.reserveWith(…, { payloadHash })`.
+- **`idempotencyKey`** (contract `createCheckoutRequest.idempotencyKey`): `checkouts.idempotency_key uuid UNIQUE NULL` + `idempotency_payload_hash` (lower-case hex **HMAC-SHA256(ORDER_TOKEN_SECRET, canonical request payload)**, computed by Payments — not plain sha256, so a stored hash cannot be used to confirm a guessed email/address; required when the key is set; the Architect's docs sometimes call it `idempotency_request_hash` — the canonical DB column name is `idempotency_payload_hash`). Race-safe pattern in ONE transaction: `INSERT INTO checkouts (..., idempotency_key, idempotency_payload_hash) ... ON CONFLICT (idempotency_key) DO NOTHING;` → `checkout_id_for_idempotency_key(key, hash)` (returns the id; raises `IDEMPOTENCY_CONFLICT` if the stored hash differs → API 409) → `reserve_checkout(id, items, expires, hash)` (no-op on repeat; also checks the hash) → return the existing checkout. Tested with 10 parallel submits (1 checkout, 1 reservation) + a different-payload submit (IDEMPOTENCY_CONFLICT). TS: `inventory.checkoutIdForIdempotencyKey()`, `inventory.reserveWith(…, { payloadHash })`.
 - Guest token: the createCheckout response carries `guestToken`/`accessToken` once; the DB never stores it, only `access_token_hash` (HMAC hex, see below).
 
 ### `convert_checkout_to_order(p_checkout_id uuid, p_order jsonb, p_conflict_mode text default 'record') returns jsonb`
@@ -111,7 +112,7 @@ RLS is ON for every public table. "server" = only `service_role` / `DATABASE_URL
 | profiles | — | own row read; update `full_name` only | read all | read all | read all |
 | admin_users | — | own row read; **cannot insert** (QA-03) | own row | own row | all + write |
 | checkouts, orders, order_items, order_events, payments, refunds, shipments, payment_events, provider_transactions, stock_reservations, inventory_movements, audit_log, newsletter_subscribers | — | — | — | — (server APIs) | — (server APIs) |
-| storage `product-images` | read | read | upload/update/delete | read | upload/update/delete |
+| storage `product-images` | public URL download only (no listing, 0007) | same | list + upload/update/delete | public URL only | list + upload/update/delete |
 Admin = `app_private.is_admin(roles)` (SECURITY DEFINER, reads `admin_users` by `auth.uid()`, `is_active`; owner always passes). Fulfilment work (orders, shipments, stock adjust) goes through server routes that check the role. Inactive admins are treated as customers. Stock columns cannot be written directly by anon/authenticated/service_role (column grants); `inventory_movements` UPDATE/DELETE/TRUNCATE revoked + trigger.
 
 Public read helpers (all `security_invoker = on` / SECURITY INVOKER, so RLS + column grants apply):
@@ -152,7 +153,10 @@ column grants (no stock counts) and the `security_invoker` views apply exactly a
 Integration test: `src/server/db/tests/api_smoke.sh` (82 curl checks incl. 400/404/422) against `next dev` + a local DB from `apply-local.sh`.
 Env for the routes: `DATABASE_URL` (server), `NEXT_PUBLIC_SUPABASE_URL` (image URLs), plus whatever `serverEnv()` requires.
 
-## 9. Open items
+## 9. Owner actions (Supabase dashboard, not migrations)
+- **Disable public sign-ups**: Authentication → Sign In / Providers → turn off "Allow new users to sign up" (admins are invited/created by the owner; customers check out as guests). Not expressible as a migration.
+
+## 10. Open items
 - Payment provider final choice (Payme vs Click; `mock` until sandbox keys). Schema is provider-agnostic.
 - UZ personal-data localisation (ZRU-547 art. 27¹, amended by ZRU-1125): lawyer to confirm whether EU hosting is allowed before real customer data. Staging only until then.
 - Real product photos (bucket is empty), carrier + real shipping rates (placeholder), launch locales (`en/uz/ru` CHECK).
