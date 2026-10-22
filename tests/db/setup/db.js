@@ -10,8 +10,8 @@ export async function hasFunction(c, name) {
 }
 export async function seedVariant(c, { onHand, reserved = 0, active = true, price = 125000000 } = {}) {
   const cat = await c.query(`INSERT INTO categories(slug,kind) VALUES ('c-'||gen_random_uuid(),'clothing') RETURNING id`);
-  const p = await c.query(`INSERT INTO products(slug,category_id,base_price_cents,currency,size_system,status,published_at,ikpu_code)
-     VALUES ('p-'||gen_random_uuid(),$1,$2,'UZS','alpha','published',now(),$3) RETURNING id`, [cat.rows[0].id, price, IKPU]);
+  const p = await c.query(`INSERT INTO products(slug,category_id,base_price_cents,currency,size_system,status,published_at,ikpu_code,vat_rate_bp)
+     VALUES ('p-'||gen_random_uuid(),$1,$2,'UZS','alpha','published',now(),$3,1200) RETURNING id`, [cat.rows[0].id, price, IKPU]);
   const v = await c.query(`INSERT INTO product_variants(product_id,sku,size,stock_on_hand,stock_reserved,is_active)
      VALUES ($1,'SKU-'||gen_random_uuid(),'M',$2,$3,$4) RETURNING id`, [p.rows[0].id, onHand, reserved, active]);
   return v.rows[0].id;

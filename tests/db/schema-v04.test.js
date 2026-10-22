@@ -43,9 +43,19 @@ describe("§13 fiscal: ikpu_code / vat_rate_bp required to publish", () => {
     const pid = (await p.query("SELECT product_id FROM product_variants WHERE id=$1", [v])).rows[0].product_id;
     await expect(p.query("UPDATE products SET ikpu_code='123' WHERE id=$1", [pid])).rejects.toMatchObject({ code: "23514" });
   });
-  it("vat_rate_bp has no silent default (publish must require an explicit VAT rate)", async () => {
-    const def = (await p.query(`SELECT column_default FROM information_schema.columns WHERE table_name='products' AND column_name='vat_rate_bp'`)).rows[0]?.column_default;
-    expect(def, "products.vat_rate_bp DEFAULT means a product can be published with an unconfirmed 12% rate").toBeNull();
+  // Architect decision (2026-10-22): products.vat_rate_bp NOT NULL with NO default; every product sets VAT explicitly.
+  it("products.vat_rate_bp is NOT NULL with no DEFAULT; inserting a product without it fails", async () => {
+    const col = (await p.query(`SELECT column_default, is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='vat_rate_bp'`)).rows[0];
+    expect(col.is_nullable).toBe("NO");
+    expect(col.column_default, "products.vat_rate_bp DEFAULT means a product can be published with an unconfirmed 12% rate").toBeNull();
+    const cat = await p.query(`INSERT INTO categories(slug,kind) VALUES ('c-'||gen_random_uuid(),'clothing') RETURNING id`);
+    await expect(p.query(`INSERT INTO products(slug,category_id,base_price_cents,currency,size_system,status) VALUES ('p-'||gen_random_uuid(),$1,100,'UZS','alpha','draft')`, [cat.rows[0].id]))
+      .rejects.toMatchObject({ code: "23502" });
+  });
+  it("convert_checkout_to_order does not invent a VAT rate (no hard-coded 1200 fallback)", async (ctx) => {
+    const src = (await p.query(`SELECT prosrc FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname='convert_checkout_to_order'`)).rows[0]?.prosrc;
+    if (!src) ctx.skip("convert_checkout_to_order not migrated");
+    expect(src).not.toMatch(/vat_rate_bp\s*,\s*1200\s*\)/i);
   });
   it("order_items snapshot ikpu_code, package_code, vat_rate_bp", async () => {
     for (const c of ["ikpu_code", "package_code", "vat_rate_bp"]) expect(await hasColumn(p, "order_items", c), c).toBe(true);
@@ -72,7 +82,7 @@ describe("function hardening (§12.5)", () => {
     if (!f) ctx.skip("product_facets not migrated");
     expect(f.prosecdef, "product_facets must not be SECURITY DEFINER").toBe(false);
     const cat = await p.query(`INSERT INTO categories(slug,kind) VALUES ('c-'||gen_random_uuid(),'clothing') RETURNING id, slug`);
-    const pr = await p.query(`INSERT INTO products(slug,category_id,base_price_cents,currency,size_system,status) VALUES ('p-'||gen_random_uuid(),$1,999999999,'UZS','alpha','draft') RETURNING id`, [cat.rows[0].id]);
+    const pr = await p.query(`INSERT INTO products(slug,category_id,base_price_cents,currency,size_system,status,vat_rate_bp) VALUES ('p-'||gen_random_uuid(),$1,999999999,'UZS','alpha','draft',1200) RETURNING id`, [cat.rows[0].id]);
     await p.query(`INSERT INTO product_variants(product_id,sku,size,stock_on_hand,is_active) VALUES ($1,'SKU-'||gen_random_uuid(),'QA-DRAFT-SIZE',5,true)`, [pr.rows[0].id]);
     const c = await p.connect();
     try {
