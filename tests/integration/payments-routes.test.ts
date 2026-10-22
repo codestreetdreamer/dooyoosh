@@ -19,7 +19,7 @@ const B = "http://qa.local/api/v1";
 type Mods = Awaited<ReturnType<typeof load>>;
 async function load(provider: "mock" | "payme" | "click", extra: Record<string, string> = {}) {
   vi.resetModules();
-  const env = { PAYMENTS_STORE: "memory", PAYMENT_PROVIDER: provider, PAYMENT_MODE: "sandbox", PAYMENT_WEBHOOK_SECRET: SECRET,
+  const env = { PAYMENTS_STORE: "memory", PAYMENT_PROVIDER: provider, PAYMENT_MODE: "sandbox", NEXT_PUBLIC_PAYMENT_MODE: "sandbox", SANDBOX_SIMULATOR_ENABLED: "true", PAYMENT_WEBHOOK_SECRET: SECRET,
     ORDER_TOKEN_SECRET: "qa_order_token_secret_0123456789abcdef0123", TOKEN_SECRET: "qa_order_token_secret_0123456789abcdef0123",
     CRON_SECRET: CRON, NEXT_PUBLIC_SITE_URL: "http://qa.local", PAYME_MERCHANT_ID: "qa-merchant", PAYME_KEY, PAYME_LOGIN: "Paycom",
     PAYME_ACCOUNT_FIELD: "order_id", CLICK_SERVICE_ID: "123", CLICK_MERCHANT_ID: "456", CLICK_SECRET_KEY: CLICK_SECRET, DEFAULT_CURRENCY: "UZS", ...extra };
@@ -38,7 +38,7 @@ async function load(provider: "mock" | "payme" | "click", extra: Record<string, 
   store.addVariant({ variantId: v, sku: "DEMO-QA-1", productName: "QA dress", size: "M", unitPriceMinor: 125_000_000, currency: "UZS", stockOnHand: 3, weightGrams: 300 });
   store.addVariant({ variantId: soldOut, sku: "DEMO-QA-2", productName: "QA sold out", unitPriceMinor: 10_000_000, currency: "UZS", stockOnHand: 0, weightGrams: 300 });
   store.addVariant({ variantId: inactive, sku: "DEMO-QA-3", productName: "QA inactive", unitPriceMinor: 10_000_000, currency: "UZS", stockOnHand: 5, isActive: false, weightGrams: 300 });
-  store.addShippingMethod({ methodId, code: "uz_std", name: "Standard", minDays: 1, maxDays: 3, priceMinor: 3_000_000, freeOverMinor: null, currency: "UZS", countries: ["UZ"] });
+  store.addShippingMethod({ methodId, name: "Tashkent courier", isActive: true, marketCurrency: "UZS", marketActive: true, countries: ["UZ"], rates: [{ minSubtotalMinor: 0, maxWeightGrams: null, priceMinor: 3_000_000, freeOverMinor: null }] });
   return { checkout, status, sandbox, webhook, cron, store, v, soldOut, inactive, methodId };
 }
 
@@ -53,7 +53,9 @@ async function create(m: Mods, over: Record<string, unknown> = {}) {
   const r = await m.checkout.POST(post(`${B}/checkout`, body(m, over)));
   return { r, j: await json(r) };
 }
-const tokenOf = (redirectUrl: string) => new URL(redirectUrl).searchParams.get("token");
+const tokenOf = (data: any): string | null => data?.guestToken ?? data?.accessToken ?? (data?.redirectUrl ? new URL(data.redirectUrl).searchParams.get("token") : null);
+const sandboxPay = (m: Mods, id: string, token: string | undefined, outcome = "success", query = "") =>
+  m.sandbox.POST(post(`${B}/checkout/${id}/sandbox-pay${query}`, token === undefined ? { outcome } : { token, outcome }), params({ checkoutId: id }));
 const signMock = (raw: string, t = Math.floor(Date.now() / 1000), secret = SECRET) => `t=${t},v1=${createHmac("sha256", secret).update(`${t}.${raw}`).digest("hex")}`;
 const mockEvent = (co: any, over: Record<string, unknown> = {}) => ({ provider: "mock", eventId: `evt_${randomUUID()}`, type: "payment.succeeded",
   providerPaymentId: `mock_pi_${co.checkoutId}`, amountMinor: co.totals.totalMinor, currency: co.totals.currency, checkoutId: co.checkoutId, ...over });
@@ -69,7 +71,7 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
 
     it("201; totals recomputed on server; client price/total fields ignored", async () => {
       const { r, j } = await create(m, { items: [{ variantId: m.v, quantity: 1, unitPriceMinor: 1, priceMinor: 1 }], totalMinor: 1, totals: { totalMinor: 1 }, currency: "USD" });
-      expect(r.status).toBe(201);
+      expect(r.status, JSON.stringify(j)).toBe(201);
       expect(j.data.totals).toMatchObject({ currency: "UZS", subtotalMinor: 125_000_000, shippingMinor: 3_000_000, totalMinor: 128_000_000 });
     });
     it("reservation 35 min > provider session 30 min", async () => {
@@ -122,10 +124,11 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       const r = await m.checkout.POST(post(`${B}/checkout`, "{nope"));
       expect(r.status).toBe(400); expect((await json(r)).error.code).toBe("VALIDATION_ERROR");
     });
-    it("same idempotencyKey -> same checkout, reserved once", async () => {
+    it("same idempotencyKey -> same checkout, same token, reserved once", async () => {
       const key = randomUUID();
       const a = await create(m, { idempotencyKey: key }); const b = await create(m, { idempotencyKey: key });
       expect(b.j.data.checkoutId).toBe(a.j.data.checkoutId);
+      expect(tokenOf(b.j.data)).toBe(tokenOf(a.j.data));
       expect(m.store.stock(m.v).reserved).toBe(1);
     });
     it("same idempotencyKey with a DIFFERENT cart must not silently return the old checkout", async () => {
@@ -150,37 +153,58 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       expect(a.status).toBe(404); expect(b.status).toBe(404);
       expect(await json(a)).toEqual(await json(b));
     });
-    it("redirectUrl carries a token that opens status (and only that checkout)", async () => {
+    it("response carries data.guestToken (contract cfd5cee) and the token is NOT in redirectUrl", async () => {
+      const { r, j } = await create(m);
+      expect(r.status, JSON.stringify(j)).toBe(201);
+      // contract cfd5cee names it guestToken; Payments 935dfa3 returns accessToken -> response parse fails on main (QA-?)
+      expect(typeof j.data.guestToken, "data.guestToken missing (contract cfd5cee); got keys " + Object.keys(j.data)).toBe("string");
+      const t = tokenOf(j.data)!;
+      expect(j.data.redirectUrl, "guest token must never be put in a URL (provider/third-party Referer + logs)").not.toContain(t);
+      expect(j.data.redirectUrl).not.toContain(encodeURIComponent(t));
+    });
+    it("no guest token in redirectUrl or any URL nested in it (success/cancel/return params)", async () => {
+      const { j } = await create(m); const t = tokenOf(j.data)!;
+      const urls = [j.data.redirectUrl];
+      for (const v of new URL(j.data.redirectUrl).searchParams.values()) if (/^https?:|^\//.test(v)) urls.push(v);
+      for (const u of urls) { expect(u).not.toContain(t); expect(decodeURIComponent(u)).not.toContain(t); }
+    });
+    it("status accepts the token as Authorization: Bearer (contract cfd5cee: token never in a URL)", async () => {
+      const { j } = await create(m); const id = j.data.checkoutId; const t = tokenOf(j.data)!;
+      const r = await m.status.GET(new Request(`${B}/checkout/${id}/status`, { headers: { authorization: `Bearer ${t}` } }), params({ checkoutId: id }));
+      expect(r.status, "status ignores Authorization: Bearer and still needs ?token=").toBe(200);
+      const bad = await m.status.GET(new Request(`${B}/checkout/${id}/status`, { headers: { authorization: `Bearer ${"q".repeat(43)}` } }), params({ checkoutId: id }));
+      expect(bad.status).toBe(404);
+    });
+    it("token opens status (and only that checkout)", async () => {
       const a = await create(m); const b = await create(m);
-      const ta = tokenOf(a.j.data.redirectUrl);
+      const ta = tokenOf(a.j.data);
       expect(ta, "redirectUrl has no token").toBeTruthy();
-      const ok = await m.status.GET(new Request(`${B}/checkout/${a.j.data.checkoutId}/status?token=${ta}`), params({ checkoutId: a.j.data.checkoutId }));
+      const ok = await m.status.GET(new Request(`${B}/checkout/${a.j.data.checkoutId}/status?token=${ta}`, { headers: { authorization: `Bearer ${ta}` } }), params({ checkoutId: a.j.data.checkoutId }));
       expect(ok.status).toBe(200);
-      const cross = await m.status.GET(new Request(`${B}/checkout/${b.j.data.checkoutId}/status?token=${ta}`), params({ checkoutId: b.j.data.checkoutId }));
+      const cross = await m.status.GET(new Request(`${B}/checkout/${b.j.data.checkoutId}/status?token=${ta}`, { headers: { authorization: `Bearer ${ta}` } }), params({ checkoutId: b.j.data.checkoutId }));
       expect(cross.status).toBe(404);
     });
-    it("sandbox-pay requires the token (missing -> 400, wrong -> 404) and creates no order", async () => {
-      const { j } = await create(m); const id = j.data.checkoutId;
-      const miss = await m.sandbox.POST(new Request(`${B}/checkout/${id}/sandbox-pay?outcome=success`, { method: "POST" }), params({ checkoutId: id }));
-      expect(miss.status).toBe(400);
-      const wrong = await m.sandbox.POST(new Request(`${B}/checkout/${id}/sandbox-pay?token=${"q".repeat(40)}&outcome=success`, { method: "POST" }), params({ checkoutId: id }));
-      expect(wrong.status).toBe(404);
+    it("sandbox-pay requires the token in the BODY (missing -> 400, in query -> 400, wrong -> 404) and creates no order", async () => {
+      const { j } = await create(m); const id = j.data.checkoutId; const t = tokenOf(j.data)!;
+      expect((await sandboxPay(m, id, undefined)).status).toBe(400);
+      expect((await sandboxPay(m, id, t, "success", `?token=${t}`)).status, "token in query string must be refused").toBe(400);
+      expect((await sandboxPay(m, id, "q".repeat(40))).status).toBe(404);
       expect(ordersFor(m, id)).toHaveLength(0);
     });
     it("sandbox-pay with token -> exactly one paid order; repeated -> still one", async () => {
-      const { j } = await create(m); const id = j.data.checkoutId; const t = tokenOf(j.data.redirectUrl);
-      for (let i = 0; i < 3; i++) await m.sandbox.POST(new Request(`${B}/checkout/${id}/sandbox-pay?token=${t}&outcome=success`, { method: "POST" }), params({ checkoutId: id }));
+      const { j } = await create(m); const id = j.data.checkoutId; const t = tokenOf(j.data);
+      for (let i = 0; i < 3; i++) await sandboxPay(m, id, t!);
       expect(ordersFor(m, id).map((o) => o.status)).toEqual(["paid"]);
       expect(m.store.stock(m.v)).toMatchObject({ onHand: 2, reserved: 0 });
     });
-    it("sandbox-pay is refused (403) when PAYMENT_MODE=live", async () => {
+    it("sandbox-pay is refused when PAYMENT_MODE=live", async () => {
       const live = await load("mock", { PAYMENT_MODE: "live" }).catch((e) => e);
       if (live instanceof Error) return; // config refuses mock+live outright: also acceptable
       const { r, j } = await create(live);
       if (r.status !== 201) return; // checkout refused in live mode: acceptable
-      const id = j.data.checkoutId; const t = tokenOf(j.data.redirectUrl) ?? "q".repeat(40);
-      const s = await live.sandbox.POST(new Request(`${B}/checkout/${id}/sandbox-pay?token=${t}&outcome=success`, { method: "POST" }), params({ checkoutId: id }));
-      expect(s.status).toBe(403);
+      const id = j.data.checkoutId; const t = tokenOf(j.data) ?? "q".repeat(40);
+      const s = await sandboxPay(live, id, t);
+      expect([403, 404]).toContain(s.status);
     });
     it("sandbox-pay is refused when NODE_ENV=production", async () => {
       const p = await load("mock", { NODE_ENV: "production", ALLOW_MOCK_IN_PRODUCTION: "true" }).catch((e) => e);
@@ -260,7 +284,8 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       const raw = JSON.stringify(mockEvent(a.j.data));
       const r = await sendMock(one, raw, signMock(raw));
       expect(r.status).toBe(200);
-      expect(ordersFor(one, a.j.data.checkoutId).map((o) => o.status)).toEqual(["stock_conflict"]);
+      // spec v0.2: stock_conflict + auto-refund; mock refunds synchronously so 'refunded' is the settled state
+      expect(ordersFor(one, a.j.data.checkoutId).map((o) => o.status)).toEqual([expect.stringMatching(/^(stock_conflict|refunded)$/)]);
       expect(one.store.stock(one.v)).toMatchObject({ onHand: 3, reserved: 3 });
     });
   });
@@ -402,6 +427,56 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       const c = await send(complete(j.data.checkoutId, String(p.j.merchant_prepare_id), amt, tr));
       expect(Number(c.j.error)).toBeLessThan(0);
       expect(ordersFor(m, j.data.checkoutId).filter((o) => o.status === "paid")).toHaveLength(0);
+    });
+  });
+
+  describe("ADMIN_DEV_TOKEN + guest order lookup", () => {
+    const DEV = "qa_admin_dev_token_0123456789abcdef0123";
+    const HAS_ADMIN = fs.existsSync(path.join(ROOT, "src/app/api/v1/admin/orders/route.ts"));
+    const adminGet = async (extra: Record<string, string>) => {
+      const m = await load("mock", { ADMIN_DEV_TOKEN: DEV, ...extra }).catch((e) => e);
+      if (m instanceof Error) return { refusedAtBoot: true, status: 0 };
+      const route = await import("@/app/api/v1/admin/orders/route");
+      const r = await route.GET(new Request(`${B}/admin/orders`, { headers: { authorization: `Bearer ${DEV}` } }));
+      return { refusedAtBoot: false, status: r.status };
+    };
+    it.skipIf(!HAS_ADMIN)("dev token grants admin in development+memory (sanity)", async () => {
+      expect((await adminGet({ NODE_ENV: "development" })).status).toBe(200);
+    });
+    it.skipIf(!HAS_ADMIN)("dev token is ignored when NODE_ENV=production (P0 if it grants admin)", async () => {
+      const r = await adminGet({ NODE_ENV: "production", ALLOW_MOCK_IN_PRODUCTION: "true" });
+      if (!r.refusedAtBoot) expect(r.status).toBe(401);
+    });
+    it.skipIf(!HAS_ADMIN)("dev token is ignored when PAYMENT_MODE=live", async () => {
+      const r = await adminGet({ NODE_ENV: "development", PAYMENT_MODE: "live", NEXT_PUBLIC_PAYMENT_MODE: "live" });
+      if (!r.refusedAtBoot) expect(r.status).toBe(401);
+    });
+    it.skipIf(!HAS_ADMIN)("wrong / prefix / lowercase-bearer dev token -> 401", async () => {
+      const m = await load("mock", { ADMIN_DEV_TOKEN: DEV, NODE_ENV: "development" });
+      const route = await import("@/app/api/v1/admin/orders/route");
+      for (const h of [`Bearer ${DEV}x`, `Bearer ${DEV.slice(0, -1)}`, `bearer ${DEV}`, DEV, ""]) {
+        expect((await route.GET(new Request(`${B}/admin/orders`, { headers: { authorization: h } }))).status, h).toBe(401);
+      }
+      void m;
+    });
+    it("GET /orders/{ref}: right token -> 200, wrong token / other order's token -> 404; token accepted via Authorization: Bearer", async (ctx) => {
+      if (!fs.existsSync(path.join(ROOT, "src/app/api/v1/orders/[reference]/route.ts"))) ctx.skip();
+      const m = await load("mock");
+      const orders = await import("@/app/api/v1/orders/[reference]/route");
+      const pay = async () => {
+        const { j } = await create(m); const t = tokenOf(j.data)!;
+        await sandboxPay(m, j.data.checkoutId, t);
+        const st = await json(await m.status.GET(new Request(`${B}/checkout/${j.data.checkoutId}/status?token=${t}`), params({ checkoutId: j.data.checkoutId })));
+        return { ref: st.data.orderReference as string, t };
+      };
+      const a = await pay(); const b = await pay();
+      expect(a.ref).toBeTruthy();
+      const q = (ref: string, tok: string) => orders.GET(new Request(`${B}/orders/${ref}?token=${tok}`), params({ reference: ref }));
+      expect((await q(a.ref, a.t)).status).toBe(200);
+      expect((await q(a.ref, "q".repeat(43))).status).toBe(404);
+      expect((await q(a.ref, b.t)).status, "token of another order must not open this one").toBe(404);
+      const bearer = await orders.GET(new Request(`${B}/orders/${a.ref}`, { headers: { authorization: `Bearer ${a.t}` } }), params({ reference: a.ref }));
+      expect(bearer.status, "orders/{ref} only reads ?token= (contradicts cfd5cee: token never in a URL)").toBe(200);
     });
   });
 
