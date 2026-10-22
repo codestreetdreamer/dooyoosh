@@ -41,7 +41,7 @@ export const checkouts = pgTable("checkouts", {
   totalCents: bigint("total_cents", { mode: "number" }).notNull(),
   provider: paymentProvider("provider").notNull(),
   providerSessionId: text("provider_session_id"),
-  // B1: sha256 hex of the guest token minted at checkout; copied to orders.access_token_hash on convert
+  // B1: lower-case hex HMAC_SHA256(ORDER_TOKEN_SECRET, guest token), computed by Payments; copied to orders on convert
   accessTokenHash: text("access_token_hash").notNull(),
   // stock reservation expiry (35 min), set by reserve_checkout(); expires_at = provider session (30 min)
   reservedUntil: timestamp("reserved_until", { withTimezone: true }),
@@ -51,6 +51,7 @@ export const checkouts = pgTable("checkouts", {
   updatedAt: updatedAt(),
 }, (t) => [
   check("checkouts_totals_nonneg", sql`${t.subtotalCents} >= 0 AND ${t.shippingCents} >= 0 AND ${t.taxCents} >= 0 AND ${t.discountCents} >= 0 AND ${t.totalCents} >= 0`),
+  check("checkouts_access_token_hash_fmt", sql`${t.accessTokenHash} ~ '^[0-9a-f]{64}$'`),
   check("checkouts_total_sum", sql`${t.totalCents} = ${t.subtotalCents} + ${t.shippingCents} + ${t.taxCents} - ${t.discountCents}`),
   unique("checkouts_provider_session_uq").on(t.provider, t.providerSessionId),
   check("checkouts_currency_fmt", currencyCheck(t.currency)),
@@ -85,6 +86,7 @@ export const orders = pgTable("orders", {
   check("orders_currency_fmt", currencyCheck(t.currency)),
   check("orders_locale_chk", localeCheck(t.locale)),
   check("orders_reference_fmt", sql`${t.reference} ~ '^DY-[0-9]{8}-[A-Z2-7]{5}$'`),
+  check("orders_access_token_hash_fmt", sql`${t.accessTokenHash} ~ '^[0-9a-f]{64}$'`),
   check("orders_total_sum", sql`${t.totalCents} = ${t.subtotalCents} + ${t.shippingCents} + ${t.taxCents} - ${t.discountCents}`),
   check("orders_totals_nonneg", sql`${t.subtotalCents} >= 0 AND ${t.shippingCents} >= 0 AND ${t.taxCents} >= 0 AND ${t.discountCents} >= 0 AND ${t.totalCents} >= 0`),
   index("orders_status_idx").on(t.status, t.createdAt),

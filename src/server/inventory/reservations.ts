@@ -82,7 +82,7 @@ export const inventory: InventoryService & {
       return { ok: true };
     } catch (e) {
       const pg = asPgAppError(e);
-      if (pg?.message === "OUT_OF_STOCK") return { ok: false, code: "OUT_OF_STOCK", variantIds: detailIds(pg.detail) };
+      if (pg?.message === "OUT_OF_STOCK" || pg?.message === "PRICE_CHANGED") return { ok: false, code: pg.message, variantIds: detailIds(pg.detail) };
       return mapDbError(e);
     }
   },

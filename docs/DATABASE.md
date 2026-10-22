@@ -21,18 +21,22 @@ Folder `src/server/db/migrations/`, journal `meta/_journal.json`. Apply **in thi
 | `0002_stock_order_functions.sql` | hand-written | stock/order SECURITY DEFINER functions (§4 below) |
 | `0003_rls_policies.sql` | hand-written | RLS on every table, grants, policies, `storefront_*` views, `variant_availability`, `product_facets` |
 | `0004_storage_media.sql` | hand-written | Storage bucket `product-images` + policies |
+| `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default (Architect decision); CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` on checkouts + orders. **Local only — NOT on staging yet** (staging only after QA green) |
+
+Staging `bmigqxmswskihqrkeezh` currently has 0000–0004 (applied 2026-10-22).
 
 Workflow:
 1. Edit `src/server/db/schema/*.ts` → `pnpm db:generate` (new numbered file). Hand-written SQL: `pnpm drizzle-kit generate --custom --name <name>`.
 2. Test locally: `src/server/db/tests/run-all.sh` (see §7).
 3. Apply: `pnpm db:migrate` with `DATABASE_URL`, or the Supabase MCP `apply_migration` with the same names (as done for staging).
-4. Never edit a migration that has been applied to Supabase; add a new one.
+4. Never edit a migration that has been applied to Supabase; add a new one (0000–0004 are frozen). From 0005 on, generation is incremental.
+5. Staging gets new migrations only after QA gives green.
 
 Supabase-specific: migrations run as `postgres` (table owner). The 0001/0003 grants **revoke Supabase's default ALL grants** from `anon`/`authenticated`; new tables are not exposed until a later migration grants them.
 
 ## 3. Money, currency, fiscal fields
 - `*_cents` columns are **bigint minor units of the row's `currency`** (UZS: tiyin, 1 so'm = 100). No DB default currency; it comes from `markets.currency` (`UZ`/`UZS` seeded).
-- `products.ikpu_code` (IKPU/MXIK): `^(DEMO-)?[0-9]{17}$`, required to publish (`products_published_requires_ikpu`). `package_code` nullable. `vat_rate_bp` int 0..10000, default 1200 (12 %) — see open items.
+- `products.ikpu_code` (IKPU/MXIK): `^(DEMO-)?[0-9]{17}$`, required to publish (`products_published_requires_ikpu`). `package_code` nullable. `vat_rate_bp` int NOT NULL 0..10000, **no default** (0005): every product insert must set it explicitly (seeds write 1200 = 12 %).
 - **DEMO IKPU**: seed products use `DEMO-` + 17 digits. Generated column `ikpu_is_demo` exists on `products` and `order_items`. **Payments must refuse to issue a live fiscal receipt or take a live payment for any line with `ikpu_is_demo = true` (or `ikpuCode` starting `DEMO-`).**
 - `order_items` snapshots `ikpu_code`, `package_code`, `vat_rate_bp` at convert time (from the checkout snapshot line `ikpuCode/packageCode/vatRateBp` if present, else from `products`).
 - `products.slug <> 'facets'` (reserved path).
@@ -53,7 +57,7 @@ Errors are `RAISE EXCEPTION '<CODE>' USING ERRCODE = 'P0001', DETAIL = <json>`; 
 | `INSUFFICIENT_STOCK` | `{"variant_id"}` (adjust would go below reserved) | 400 |
 
 ### `reserve_checkout(p_checkout_id uuid, p_items jsonb, p_expires_at timestamptz) returns void`
-- Precondition: the app has inserted the `checkouts` row (status `open`/`awaiting_payment`) with `items` = `CheckoutSnapshotLine[]` (camelCase: `variantId, sku, productName, size, colour, unitPriceMinor, quantity, lineTotalMinor, ikpuCode, packageCode, vatRateBp`), `subtotal_cents = Σ unitPriceMinor·quantity`, `total_cents = subtotal + shipping + tax − discount` (CHECK), `access_token_hash` (B1, hex sha256 of the guest token), `provider`, `expires_at` = provider session expiry (now + 30 min).
+- Precondition: the app has inserted the `checkouts` row (status `open`/`awaiting_payment`) with `items` = `CheckoutSnapshotLine[]` (camelCase: `variantId, sku, productName, size, colour, unitPriceMinor, quantity, lineTotalMinor, ikpuCode, packageCode, vatRateBp`), `subtotal_cents = Σ unitPriceMinor·quantity`, `total_cents = subtotal + shipping + tax − discount` (CHECK), `access_token_hash` (B1, lower-case hex `HMAC_SHA256(ORDER_TOKEN_SECRET, token)`, computed by Payments), `provider`, `expires_at` = provider session expiry (now + 30 min).
 - `p_items = [{"variant_id": uuid, "quantity": 1..10}]`, no duplicates, must equal the snapshot lines (else `VALIDATION_ERROR`).
 - Locks variants `ORDER BY id`, re-checks: variant active, product published/not archived/`published_at <= now()`, product currency = checkout currency, snapshot price = DB price (`PRICE_CHANGED`), stock (`OUT_OF_STOCK`). Then `stock_reserved += q` (spec §4 conditional UPDATE) and inserts `stock_reservations` (expires_at = `p_expires_at`, use now + 35 min), sets `checkouts.reserved_until = p_expires_at`.
 - **Idempotent**: calling again for the same checkout with the same lines while reservations are active is a no-op.
@@ -86,7 +90,7 @@ Return path, e.g. **Payme CancelTransaction after PerformTransaction**: puts bac
 Table for Payme/Click transactions (`ProviderTransaction` in `src/contracts/payments.ts`): `provider, provider_txn_id` UNIQUE, `checkout_id` NOT NULL, `order_id` NULL until Perform/Complete, `state` enum `created|performed|canceled|canceled_after_perform`, `amount_cents`, `currency`, `cancel_reason int`, `raw jsonb`, `created_at/performed_at/canceled_at/updated_at`. Server only (service_role / owner); Payments reads/writes it directly (`INSERT ... ON CONFLICT (provider, provider_txn_id) DO NOTHING` for CreateTransaction idempotency).
 
 ### Guest order token
-DB stores only `access_token_hash = encode(sha256(convert_to(token,'UTF8')),'hex')` (minted at checkout, B1). Lookup is a server query: `... where reference = $1 and access_token_hash = $hash` (unknown or wrong → 404).
+DB stores only `access_token_hash` = lower-case hex of `HMAC_SHA256(ORDER_TOKEN_SECRET, token)`, computed by Payments when the token is minted at checkout (B1); the DB never sees the token or the secret and only enforces the format (`CHECK ~ '^[0-9a-f]{64}$'`, 0005). Test fixtures use any 64-hex value. Lookup is a server query: `... where reference = $1 and access_token_hash = $hash` (unknown or wrong → 404).
 
 ## 5. RLS matrix
 RLS is ON for every public table. "server" = only `service_role` / `DATABASE_URL` (bypass RLS); no anon/authenticated grants or policies at all.
@@ -124,9 +128,26 @@ Public URL: `${NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/product-images
   - `functions_test.sql` — reserve/convert/release/adjust/restock/events/IKPU semantics (ROLLBACK).
   - `concurrency_test.sh` — real parallel sessions (local only): 20× reserve on stock 1, 20× on stock 5, 10× duplicate convert, converts racing the expiry sweep, 10× same idempotencyKey.
 
-## 8. Open items
+## 8. Public API (Backend-owned routes, `src/app/api/v1/**`)
+All public reads run in a READ ONLY transaction with `SET LOCAL ROLE anon` (`asAnon()` in `src/server/db/client.ts`), so RLS, the
+column grants (no stock counts) and the `security_invoker` views apply exactly as for a browser anon key. Handlers:
+`parse(contract) → service (src/server/catalog|journal) → respond(contract)`; responses are validated against the Zod contract.
+| Route | Service | Notes |
+|---|---|---|
+| `GET /products` | `catalog/products.ts` | filters category (incl. sub-categories), size, colour (case-insensitive, active variant), min/maxPrice on price-from; sort new/price_asc/price_desc; opaque keyset cursor |
+| `GET /products/{slug}` | `catalog/products.ts` | 404 for unknown/draft/archived/future; variants expose only `available`; fiscal fields not exposed |
+| `GET /products/facets` | `catalog/facets.ts` | `product_facets()`; sizes in natural order (XS<S<M<L, numeric) |
+| `GET /categories` | `catalog/categories.ts` | active tree; name/description fall back to `en`, then slug |
+| `GET /search` | `catalog/search.ts` | prefix tsquery built from letters/digits only (no tsquery injection); products + articles, rank-merged |
+| `GET /articles`, `GET /articles/{slug}` | `journal/articles.ts` | published + `published_at <= now()`; tags; shoppable products; keyset cursor |
+| `POST /cart/validate` | `catalog/cart.ts` | public facts as anon; `maxQuantity = least(on_hand − reserved, 10)` computed in SQL by the server role (exact stock never leaves the DB); issues `out_of_stock / insufficient_stock / inactive / not_found` |
+| `GET /shipping/options` | `catalog/shipping-options.ts` | 422 `COUNTRY_NOT_SHIPPABLE`; rate tier by `subtotalMinor` hint; price 0 when hint ≥ freeOver |
+| `POST /newsletter`, `GET /newsletter/confirm` | `journal/newsletter.ts` | always 202; honeypot + per-IP (10/10 min) and per-email (3/h) in-memory limits; upsert is idempotent; confirm token stored as sha256 hex, 7-day TTL. **Confirmation email not sent yet** (hook `onToken` for Payments' email module) |
+Integration test: `src/server/db/tests/api_smoke.sh` (82 curl checks incl. 400/404/422) against `next dev` + a local DB from `apply-local.sh`.
+Env for the routes: `DATABASE_URL` (server), `NEXT_PUBLIC_SUPABASE_URL` (image URLs), plus whatever `serverEnv()` requires.
+
+## 9. Open items
 - Payment provider final choice (Payme vs Click; `mock` until sandbox keys). Schema is provider-agnostic.
 - UZ personal-data localisation (ZRU-547 art. 27¹, amended by ZRU-1125): lawyer to confirm whether EU hosting is allowed before real customer data. Staging only until then.
-- `vat_rate_bp` default 1200: Architect/Payments asked for it; QA asks for no default (explicit VAT on publish). Needs a decision.
 - Real product photos (bucket is empty), carrier + real shipping rates (placeholder), launch locales (`en/uz/ru` CHECK).
 - QA fixtures in `tests/db/setup/db.js`: `seedCheckout` creates `items='[]'` with an arbitrary total; `reserve_checkout` now verifies lines against the snapshot, so those tests need a snapshot line + matching subtotal.

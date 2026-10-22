@@ -13,8 +13,8 @@ fail() { echo "FAIL: $*"; exit 1; }
 insert into public.markets (code, currency, is_active) values ('$TAG', 'UZS', true);
 insert into public.shipping_methods (market_id, code, name, min_days, max_days) select id, '$TAG', '$TAG', 1, 2 from public.markets where code = '$TAG';
 insert into public.categories (slug, kind) values ('$TAG', 'clothing');
-insert into public.products (slug, category_id, status, base_price_cents, currency, size_system, ikpu_code, published_at)
-  select '$TAG', id, 'published', 10000000, 'UZS', 'alpha', '12345678901234567', now() - interval '1 day' from public.categories where slug = '$TAG';
+insert into public.products (slug, category_id, status, base_price_cents, currency, size_system, ikpu_code, vat_rate_bp, published_at)
+  select '$TAG', id, 'published', 10000000, 'UZS', 'alpha', '12345678901234567', 1200, now() - interval '1 day' from public.categories where slug = '$TAG';
 insert into public.product_variants (product_id, sku, size) select id, '$TAG-ONE', 'M' from public.products where slug = '$TAG';
 insert into public.product_variants (product_id, sku, size) select id, '$TAG-FIVE', 'L' from public.products where slug = '$TAG';
 do \$\$ begin perform public.adjust_stock(id, case when sku like '%-ONE' then 1 else 5 end, 'restock', 'cc', null) from public.product_variants where sku like '$TAG-%'; end \$\$;
@@ -31,7 +31,7 @@ begin
       select 'cc@test.invalid', 'en', 'UZS',
              jsonb_build_array(jsonb_build_object('variantId', v.id, 'sku', v.sku, 'productName', 'CC', 'size', 'M', 'colour', null,
                                                   'unitPriceMinor', 10000000, 'quantity', 1, 'lineTotalMinor', 10000000)),
-             '{}', sm.id, 10000000, 0, 10000000, 'mock', 'h', now() + interval '30 min'
+             '{}', sm.id, 10000000, 0, 10000000, 'mock', repeat('ab', 32), now() + interval '30 min'
         from public.shipping_methods sm where sm.code = '$TAG'
       returning id into cid;
       insert into cc_test.checkouts values ('$TAG', g, v.sku, cid);
@@ -109,7 +109,7 @@ insert into public.checkouts (email, locale, currency, items, shipping_address, 
 select 'idem@test.invalid', 'en', 'UZS',
        jsonb_build_array(jsonb_build_object('variantId', v.id, 'sku', v.sku, 'productName', 'CC', 'size', 'L', 'colour', null,
                                             'unitPriceMinor', 10000000, 'quantity', 1, 'lineTotalMinor', 10000000)),
-       '{}', sm.id, 10000000, 0, 10000000, 'mock', 'h', now() + interval '30 min', '$KEY'
+       '{}', sm.id, 10000000, 0, 10000000, 'mock', repeat('ab', 32), now() + interval '30 min', '$KEY'
   from public.product_variants v, public.shipping_methods sm where v.sku = '$TAG-FIVE' and sm.code = '$TAG'
 on conflict (idempotency_key) do nothing;
 select public.reserve_checkout(c.id, jsonb_build_array(jsonb_build_object('variant_id', v.id, 'quantity', 1)), now() + interval '35 min')

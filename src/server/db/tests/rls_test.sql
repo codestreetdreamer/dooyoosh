@@ -20,9 +20,9 @@ insert into public.admin_users (id, role, is_active) values
 insert into public.categories (id, slug, kind, is_active) values
   ('00000000-0000-4000-8000-000000000c01', 'rlstest-cat', 'clothing', true),
   ('00000000-0000-4000-8000-000000000c02', 'rlstest-cat-hidden', 'clothing', false);
-insert into public.products (id, slug, category_id, status, base_price_cents, currency, size_system, ikpu_code, published_at) values
-  ('00000000-0000-4000-8000-000000000d01', 'rlstest-published', '00000000-0000-4000-8000-000000000c01', 'published', 10000000, 'UZS', 'alpha', 'DEMO-00000000000000001', now() - interval '1 day'),
-  ('00000000-0000-4000-8000-000000000d02', 'rlstest-draft', '00000000-0000-4000-8000-000000000c01', 'draft', 10000000, 'UZS', 'alpha', null, null);
+insert into public.products (id, slug, category_id, status, base_price_cents, currency, size_system, ikpu_code, published_at, vat_rate_bp) values
+  ('00000000-0000-4000-8000-000000000d01', 'rlstest-published', '00000000-0000-4000-8000-000000000c01', 'published', 10000000, 'UZS', 'alpha', 'DEMO-00000000000000001', now() - interval '1 day', 1200),
+  ('00000000-0000-4000-8000-000000000d02', 'rlstest-draft', '00000000-0000-4000-8000-000000000c01', 'draft', 10000000, 'UZS', 'alpha', null, null, 1200);
 insert into public.product_translations (product_id, locale, name) values
   ('00000000-0000-4000-8000-000000000d01', 'en', 'RLS published'), ('00000000-0000-4000-8000-000000000d02', 'en', 'RLS draft');
 insert into public.product_variants (id, product_id, sku, size, is_active) values
@@ -36,11 +36,11 @@ insert into public.shipping_methods (id, market_id, code, name, min_days, max_da
 insert into public.checkouts (id, email, locale, currency, items, shipping_address, shipping_method_id,
                               subtotal_cents, shipping_cents, total_cents, provider, access_token_hash, expires_at) values
   ('00000000-0000-4000-8000-000000000f03', 'buyer@test.invalid', 'en', 'UZS', '[]', '{}', '00000000-0000-4000-8000-000000000f02',
-   0, 0, 0, 'mock', 'x', now() + interval '30 min');
+   0, 0, 0, 'mock', repeat('ab', 32), now() + interval '30 min');
 insert into public.orders (id, reference, checkout_id, email, locale, currency, subtotal_cents, shipping_cents, total_cents,
                            shipping_address, shipping_method_id, access_token_hash) values
   ('00000000-0000-4000-8000-000000000f04', 'DY-20261022-RLSAA', '00000000-0000-4000-8000-000000000f03', 'buyer@test.invalid', 'en', 'UZS',
-   0, 0, 0, '{}', '00000000-0000-4000-8000-000000000f02', 'x');
+   0, 0, 0, '{}', '00000000-0000-4000-8000-000000000f02', repeat('ab', 32));
 insert into public.payment_events (provider, event_id, type) values ('mock', 'rls-evt-1', 'test');
 insert into public.articles (id, slug, status, published_at) values
   ('00000000-0000-4000-8000-000000000aa1', 'rlstest-article-pub', 'published', now() - interval '1 day'),
@@ -134,8 +134,8 @@ begin
     raise exception 'FAIL: anon inserted order'; exception when insufficient_privilege then null; end;
   begin update public.product_variants set stock_reserved = 0 where sku = 'RLSTEST-1';
     raise exception 'FAIL: anon updated stock'; exception when insufficient_privilege then null; end;
-  begin insert into public.products (slug, category_id, base_price_cents, currency, size_system)
-    values ('rlstest-anon', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha');
+  begin insert into public.products (slug, category_id, base_price_cents, currency, size_system, vat_rate_bp)
+    values ('rlstest-anon', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha', 1200);
     raise exception 'FAIL: anon inserted product'; exception when insufficient_privilege then null; end;
   begin perform public.reserve_checkout('00000000-0000-4000-8000-000000000f03', '[]', now());
     raise exception 'FAIL: anon executed reserve_checkout'; exception when insufficient_privilege then null; end;
@@ -176,8 +176,8 @@ begin
   get diagnostics n = row_count; if n <> 0 then raise exception 'FAIL: user updated another profile'; end if;
   begin update public.profiles set email = 'x@y.z' where id = '00000000-0000-4000-8000-0000000000b1';
     raise exception 'FAIL: user changed own profile email'; exception when insufficient_privilege then null; end;
-  begin insert into public.products (slug, category_id, base_price_cents, currency, size_system)
-    values ('rlstest-user', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha');
+  begin insert into public.products (slug, category_id, base_price_cents, currency, size_system, vat_rate_bp)
+    values ('rlstest-user', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha', 1200);
     raise exception 'FAIL: user inserted product'; exception when insufficient_privilege then null; end;
   begin perform public.release_expired_reservations();
     raise exception 'FAIL: user executed release_expired_reservations'; exception when insufficient_privilege then null; end;
@@ -197,8 +197,8 @@ begin
   if n <> 2 then raise exception 'FAIL: editor sees % products (expected 2 incl. draft)', n; end if;
   select count(*) into n from public.articles where slug like 'rlstest-%';
   if n <> 3 then raise exception 'FAIL: editor sees % articles (expected 3)', n; end if;
-  insert into public.products (slug, category_id, base_price_cents, currency, size_system)
-  values ('rlstest-editor', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha');
+  insert into public.products (slug, category_id, base_price_cents, currency, size_system, vat_rate_bp)
+  values ('rlstest-editor', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha', 1200);
   update public.products set brand = 'Edited' where slug = 'rlstest-draft';
   get diagnostics n = row_count; if n <> 1 then raise exception 'FAIL: editor cannot update product'; end if;
   insert into public.product_variants (product_id, sku, size) values ('00000000-0000-4000-8000-000000000d02', 'RLSTEST-ED', 'S');
@@ -226,8 +226,8 @@ declare n int;
 begin
   select count(*) into n from public.products where slug like 'rlstest-%';
   if n < 2 then raise exception 'FAIL: fulfilment cannot read draft products'; end if;
-  begin insert into public.products (slug, category_id, base_price_cents, currency, size_system)
-    values ('rlstest-ful', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha');
+  begin insert into public.products (slug, category_id, base_price_cents, currency, size_system, vat_rate_bp)
+    values ('rlstest-ful', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha', 1200);
     raise exception 'FAIL: fulfilment inserted product'; exception when insufficient_privilege then null; end;
   update public.products set brand = 'x' where slug = 'rlstest-draft';
   get diagnostics n = row_count; if n <> 0 then raise exception 'FAIL: fulfilment updated product'; end if;
@@ -255,8 +255,8 @@ begin
   get diagnostics n = row_count; if n <> 1 then raise exception 'FAIL: owner cannot update shipping'; end if;
   select count(*) into n from public.profiles where email like 'rls-%';
   if n <> 6 then raise exception 'FAIL: owner sees % profiles (expected 6)', n; end if;
-  insert into public.products (slug, category_id, base_price_cents, currency, size_system)
-  values ('rlstest-owner', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha');
+  insert into public.products (slug, category_id, base_price_cents, currency, size_system, vat_rate_bp)
+  values ('rlstest-owner', '00000000-0000-4000-8000-000000000c01', 1, 'UZS', 'alpha', 1200);
   insert into storage.objects (bucket_id, name) values ('product-images', 'rlstest/owner.jpg');
   begin perform count(*) from public.payments; raise exception 'FAIL: owner reads payments directly';
   exception when insufficient_privilege then null; end;

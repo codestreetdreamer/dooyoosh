@@ -36,6 +36,13 @@
       "when": 1792711318044,
       "tag": "0004_storage_media",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792712086197,
+      "tag": "0005_vat_no_default_token_hash_fmt",
+      "breakpoints": true
     }
   ]
 }

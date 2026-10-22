@@ -33,6 +33,7 @@ begin
   insert into public.checkouts (email, locale, currency, items, shipping_address, shipping_method_id,
                                 subtotal_cents, shipping_cents, total_cents, provider, access_token_hash, expires_at)
   values ('ft@test.invalid', 'en', 'UZS', v_items, '{"country":"UZ"}', v_sm, v_sub, 3000000, v_sub + 3000000,
+          -- stands in for hex HMAC_SHA256(ORDER_TOKEN_SECRET, token) (computed by Payments; DB checks the format only)
           p_provider, encode(sha256(convert_to('token-' || gen_random_uuid(), 'UTF8')), 'hex'), now() + interval '30 min')
   returning id into v_id;
   return v_id;
@@ -219,6 +220,17 @@ begin
   exception when check_violation then null; end;
   update public.products set ikpu_code = 'DEMO-12345678901234567' where slug = 'ft-prod';
   if not (select ikpu_is_demo from public.products where slug = 'ft-prod') then raise exception 'FAIL 11: ikpu_is_demo'; end if;
+  -- 0005: vat_rate_bp has no default; access_token_hash must be 64 lower-case hex
+  begin insert into public.products (slug, category_id, base_price_cents, currency, size_system)
+          select 'ft-novat', category_id, 1, 'UZS', 'alpha' from public.products where slug = 'ft-prod';
+        raise exception 'FAIL 11: product without vat_rate_bp';
+  exception when not_null_violation then null; end;
+  begin update public.checkouts set access_token_hash = 'plain-token' where email = 'ft@test.invalid';
+        raise exception 'FAIL 11: non-hex access_token_hash accepted';
+  exception when check_violation then null; end;
+  begin update public.checkouts set access_token_hash = upper(access_token_hash) || '' where email = 'ft@test.invalid' and access_token_hash ~ '[a-f]';
+        if found then raise exception 'FAIL 11: upper-case hash accepted'; end if;
+  exception when check_violation then null; end;
   raise notice 'PASS 11 IKPU format ^(DEMO-)?[0-9]{17}$, publish requires ikpu + published_at, ikpu_is_demo flag';
 end $$;
 

@@ -48,7 +48,7 @@ export const products = pgTable("products", {
   ikpuCode: text("ikpu_code"),
   ikpuIsDemo: boolean("ikpu_is_demo").generatedAlwaysAs(sql`coalesce(ikpu_code LIKE 'DEMO-%', false)`),
   packageCode: text("package_code"),
-  vatRateBp: integer("vat_rate_bp").notNull().default(1200),
+  vatRateBp: integer("vat_rate_bp").notNull(), // no default (Architect, 0005): publish needs an explicit VAT rate
   sizeChartId: uuid("size_chart_id").references(() => sizeCharts.id, { onDelete: "set null" }),
   publishedAt: timestamp("published_at", { withTimezone: true }),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
