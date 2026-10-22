@@ -28,7 +28,8 @@ describe("createCheckout", () => {
     expect(f.store.stock(f.v1)).toEqual({ onHand: 5, reserved: 2 });
     expect(f.store.s.checkouts.get(d.checkoutId)!.status).toBe("awaiting_payment");
     expect(d.redirectUrl).toContain("/en/checkout/sandbox-pay?checkoutId=");
-    expect(new URL(d.redirectUrl).searchParams.get("token")).toBe(deriveAccessToken(TOKEN_SECRET, d.checkoutId));
+    expect(d.accessToken).toBe(deriveAccessToken(TOKEN_SECRET, d.checkoutId));
+    expect(d.redirectUrl).not.toContain(d.accessToken);
   });
 
   it("all-or-nothing: one line short -> 409 OUT_OF_STOCK, nothing reserved, no checkout row", async () => {
@@ -84,7 +85,8 @@ describe("createCheckout", () => {
     sb.store.s.variants.get(sb.v1)!.ikpuCode = "DEMO-06109001";
     const d = await createCheckout(sb.deps, sb.provider, sb.request());
     const url = Buffer.from(d.redirectUrl.split("/").pop()!, "base64").toString();
-    expect(url).toContain(`c=https://shop.example/en/checkout/return?checkoutId=${d.checkoutId}&token=`);
+    expect(url).toContain(`c=https://shop.example/en/checkout/return?checkoutId=${d.checkoutId}`);
+    expect(url).not.toContain(d.accessToken);
     expect(d.redirectUrl.startsWith("https://test.paycom.uz/")).toBe(true);
   });
 

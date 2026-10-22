@@ -15,17 +15,23 @@ import type { CheckoutRow, NewCheckout } from "../payments/store";
 import { computeQuote, linesMissingFiscalData, validateLines } from "./pricing";
 import { deriveAccessToken, hashAccessToken, tokenMatches } from "./token";
 
-type CheckoutData = CreateCheckoutResponse["data"];
+/**
+ * + accessToken: the raw guest token (QA P1). It is returned ONLY in this 201 body and is never put in any URL
+ * (redirect, success/return, cancel) because those reach third-party hosts (Payme/Click return_url) and logs.
+ * Frontend keeps it (sessionStorage by checkoutId) and sends it in the body of /sandbox-pay and as ?token= on
+ * GET /checkout/{id}/status and /orders/{ref} (our own API, no-store, no-referrer).
+ * PROPOSAL to Architect: add `accessToken` to contracts createCheckoutResponse.data.
+ */
+type CheckoutData = CreateCheckoutResponse["data"] & { accessToken: string };
 const MIN = 60_000;
 
 function urls(deps: PaymentDeps, c: { id: string; locale: string }) {
-  const token = deriveAccessToken(deps.config.tokenSecret, c.id);
   // Frontend contract: return page polls GET /checkout/{id}/status; the URL itself is never proof of payment.
+  // checkoutId only, never the token (QA P1): successUrl is handed to Payme/Click as return_url.
   const success = new URL(`/${c.locale}/checkout/return`, deps.config.siteUrl);
   success.searchParams.set("checkoutId", c.id);
-  success.searchParams.set("token", token);
   const cancel = new URL(`/${c.locale}/bag`, deps.config.siteUrl);
-  return { token, successUrl: success.toString(), cancelUrl: cancel.toString() };
+  return { successUrl: success.toString(), cancelUrl: cancel.toString() };
 }
 
 async function openSession(deps: PaymentDeps, provider: PaymentProvider, c: NewCheckout | CheckoutRow) {
@@ -43,8 +49,9 @@ async function openSession(deps: PaymentDeps, provider: PaymentProvider, c: NewC
   });
 }
 
-function toData(c: NewCheckout | CheckoutRow, provider: PaymentProvider, redirectUrl: string): CheckoutData {
+function toData(c: NewCheckout | CheckoutRow, provider: PaymentProvider, redirectUrl: string, tokenSecret: string): CheckoutData {
   return {
+    accessToken: deriveAccessToken(tokenSecret, c.id),
     checkoutId: c.id,
     provider: provider.name,
     redirectUrl,
@@ -65,7 +72,7 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
     if (existing) {
       if ((existing.status === "open" || existing.status === "awaiting_payment") && existing.expiresAt > now && existing.provider === provider.name) {
         const s = await openSession(deps, provider, existing);
-        return toData(existing, provider, s.redirectUrl);
+        return toData(existing, provider, s.redirectUrl, deps.config.tokenSecret);
       }
       throw ApiError.validation("idempotencyKey was already used for a closed checkout; start a new checkout");
     }
@@ -124,7 +131,7 @@ export async function createCheckout(deps: PaymentDeps, provider: PaymentProvide
     throw ApiError.payment("Could not start payment", { provider: provider.name, cause: e instanceof Error ? e.message : "unknown" });
   }
   await repo.setProviderSession(id, session.providerSessionId);
-  return toData(c, provider, session.redirectUrl);
+  return toData(c, provider, session.redirectUrl, deps.config.tokenSecret);
 }
 
 /** GET /checkout/{id}/status?token= — unknown id OR wrong token -> 404 (do not reveal which). */

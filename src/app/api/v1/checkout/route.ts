@@ -16,5 +16,7 @@ export const POST = withErrors(async (req: Request) => {
   const body = createCheckoutRequest.parse(json);
   const { deps, provider } = getPayments();
   const data = await createCheckout(deps, provider, body);
-  return Response.json(createCheckoutResponse.parse({ data }), { status: 201, headers: { "Cache-Control": "no-store" } });
+  // contract shape + accessToken (raw guest token, only ever in this body; see service.ts CheckoutData)
+  const parsed = createCheckoutResponse.parse({ data });
+  return Response.json({ data: { ...parsed.data, accessToken: data.accessToken } }, { status: 201, headers: { "Cache-Control": "no-store" } });
 });
