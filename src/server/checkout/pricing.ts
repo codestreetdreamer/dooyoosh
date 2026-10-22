@@ -110,7 +110,12 @@ export function computeQuote(input: LineInput[], variants: VariantForCheckout[],
   return { lines, weightGrams: weight, totals: { currency, subtotalMinor: subtotal, shippingMinor, taxMinor, discountMinor, totalMinor } };
 }
 
-/** Lines missing IKPU / package code / VAT rate. Live mode refuses to take payment for them (spec §13, ZRU-792). */
+/** Demo seed data uses IKPU codes starting "DEMO-": they must never reach a live payment or live fiscal receipt. */
+export function isDemoIkpu(code: string | null): boolean {
+  return code !== null && code.toUpperCase().startsWith("DEMO-");
+}
+
+/** Lines missing IKPU / package code / VAT rate, or carrying a DEMO- IKPU. Live mode refuses them (spec §13, ZRU-792). */
 export function linesMissingFiscalData(lines: CheckoutLine[]): string[] {
-  return lines.filter((l) => !l.ikpuCode || !l.packageCode || l.vatRateBp === null).map((l) => l.variantId);
+  return lines.filter((l) => !l.ikpuCode || isDemoIkpu(l.ikpuCode) || !l.packageCode || l.vatRateBp === null).map((l) => l.variantId);
 }

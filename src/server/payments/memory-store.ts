@@ -181,7 +181,8 @@ export class MemoryStore implements CommerceRepo, InventoryService {
     return this.releaseRows(this.s.reservations.filter((r) => r.status === "active" && r.expiresAt <= now));
   }
   async convert(checkoutId: string, input: ConvertOrderInput): Promise<ConvertResult> {
-    const existing = await this.getOrderByCheckout(checkoutId);
+    // fully synchronous body = atomic, like the row-locked SQL function (no interleaving between check and write)
+    const existing = [...this.s.orders.values()].find((o) => o.checkoutId === checkoutId);
     if (existing) return { status: "already_converted", orderId: existing.id, reference: existing.reference };
     const c = this.s.checkouts.get(checkoutId);
     if (!c) throw new Error("checkout not found");

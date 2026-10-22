@@ -147,7 +147,10 @@ export class ClickAdapter implements PaymentProvider {
     const others = (await repo.findOpenProviderTxns("click", t.checkoutId)).filter((x) => x.providerTxnId !== t.providerTxnId && x.state === 2);
     if (others.length) return done(fail(E.ALREADY_PAID), "other_txn_completed");
 
-    if (!(await repo.getOrderByCheckout(t.checkoutId)) && !(await repo.isReservationActive(t.checkoutId, now))) {
+    // Read reservation FIRST, then order: convert flips both atomically, so a concurrent winner is always seen
+    // as "order exists" here (reading in the other order lets a retry cancel a txn that was just paid).
+    const reservationActive = await repo.isReservationActive(t.checkoutId, now);
+    if (!reservationActive && !(await repo.getOrderByCheckout(t.checkoutId))) {
       const u = await repo.updateProviderTxn("click", t.providerTxnId, 1, { state: -1, cancelTime: now.getTime(), reason: null });
       if (u) await this.release(t);
       return done(fail(E.CANCELLED), "reservation_expired");

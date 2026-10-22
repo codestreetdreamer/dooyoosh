@@ -20,7 +20,8 @@ const MIN = 60_000;
 
 function urls(deps: PaymentDeps, c: { id: string; locale: string }) {
   const token = deriveAccessToken(deps.config.tokenSecret, c.id);
-  const success = new URL(`/${c.locale}/checkout/success`, deps.config.siteUrl);
+  // Frontend contract: return page polls GET /checkout/{id}/status; the URL itself is never proof of payment.
+  const success = new URL(`/${c.locale}/checkout/return`, deps.config.siteUrl);
   success.searchParams.set("checkoutId", c.id);
   success.searchParams.set("token", token);
   const cancel = new URL(`/${c.locale}/bag`, deps.config.siteUrl);

@@ -18,6 +18,7 @@ import type { PaymentConfig } from "../config";
 import type { PaymentDeps } from "../deps";
 import type { CheckoutRow, ProviderTxn } from "../store";
 import { captureCheckout, refundAfterProviderCancel } from "../settlement";
+import { isDemoIkpu } from "../../checkout/pricing";
 import { MSG, PAYME_CHECKOUT_HOST, PAYME_ERRORS as E, PAYME_IPS, PAYME_REASON, PAYME_TIMEOUT_MS, PaymeRpcError, buildPaymeCheckoutUrl, verifyPaymeAuth } from "./protocol";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -152,6 +153,11 @@ export class PaymeAdapter implements PaymentProvider {
   /** Fiscal receipt detail for CheckPerformTransaction (checkperformtransaction docs, "Добавление объекта detail"). */
   private fiscalDetail(c: CheckoutRow) {
     if (c.items.some((l) => !l.ikpuCode || !l.packageCode || l.vatRateBp === null)) return undefined;
+    // DEMO- IKPU codes must never produce a live fiscal receipt (Backend rule); in live mode refuse the payment.
+    if (c.items.some((l) => isDemoIkpu(l.ikpuCode))) {
+      if (this.mode === "live") throw new PaymeRpcError(E.ACCOUNT_NOT_PAYABLE, MSG.orderNotPayable, this.cfg.accountField);
+      return undefined;
+    }
     return {
       receipt_type: 0,
       ...(c.shippingMinor > 0 ? { shipping: { title: c.shippingName, price: c.shippingMinor } } : {}),
@@ -202,7 +208,10 @@ export class PaymeAdapter implements PaymentProvider {
     if (await this.expireIfTimedOut(t)) throw new PaymeRpcError(E.CANNOT_PERFORM, MSG.cannotPerform);
 
     const now = this.now();
-    if (!(await this.deps.repo.getOrderByCheckout(t.checkoutId)) && !(await this.deps.repo.isReservationActive(t.checkoutId, now))) {
+    // Read reservation FIRST, then order: convert flips both atomically, so a concurrent winner is always seen
+    // as "order exists" here (reading in the other order lets a retry cancel a txn that was just paid).
+    const reservationActive = await this.deps.repo.isReservationActive(t.checkoutId, now);
+    if (!reservationActive && !(await this.deps.repo.getOrderByCheckout(t.checkoutId))) {
       // reservation expired (35 min) before Payme finished: refuse, no order, stock already back on sale
       const u = await this.deps.repo.updateProviderTxn("payme", t.providerTxnId, 1, { state: -1, reason: PAYME_REASON.EXECUTION_ERROR, cancelTime: now.getTime() });
       if (u) await this.releaseCheckout(t.checkoutId, "expired");

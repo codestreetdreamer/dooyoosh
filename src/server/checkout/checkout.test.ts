@@ -74,6 +74,19 @@ describe("createCheckout", () => {
     expect(e.code).toBe("PAYMENT_ERROR");
   });
 
+  it("live mode refuses DEMO- IKPU codes; sandbox allows them", async () => {
+    const live = setup("payme", { mode: "live", fiscal: true });
+    live.store.s.variants.get(live.v1)!.ikpuCode = "DEMO-06109001";
+    const e = await apiError(createCheckout(live.deps, live.provider, live.request()));
+    expect(e.details.variantIds).toEqual([live.v1]);
+    const sb = setup("payme", { fiscal: true });
+    sb.store.s.variants.get(sb.v1)!.ikpuCode = "DEMO-06109001";
+    const d = await createCheckout(sb.deps, sb.provider, sb.request());
+    const url = Buffer.from(d.redirectUrl.split("/").pop()!, "base64").toString();
+    expect(url).toContain(`c=https://shop.example/en/checkout/return?checkoutId=${d.checkoutId}&token=`);
+    expect(d.redirectUrl.startsWith("https://test.paycom.uz/")).toBe(true);
+  });
+
   it("live mode refuses products without IKPU/package/VAT", async () => {
     const f = setup("payme", { mode: "live" });
     const e = await apiError(createCheckout(f.deps, f.provider, f.request()));
