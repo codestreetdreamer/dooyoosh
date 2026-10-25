@@ -53,7 +53,7 @@ async function create(m: Mods, over: Record<string, unknown> = {}) {
   const r = await m.checkout.POST(post(`${B}/checkout`, body(m, over)));
   return { r, j: await json(r) };
 }
-const tokenOf = (data: any): string | null => data?.accessToken ?? data?.guestToken ?? (data?.redirectUrl ? new URL(data.redirectUrl).searchParams.get("token") : null);
+const tokenOf = (data: any): string | null => data?.accessToken ?? null;
 const statusReq = (id: string, token?: string, query = "") => new Request(`${B}/checkout/${id}/status${query}`, token ? { headers: { authorization: `Bearer ${token}` } } : {});
 const sandboxPay = (m: Mods, id: string, token: string | undefined, outcome = "success", query = "") =>
   m.sandbox.POST(post(`${B}/checkout/${id}/sandbox-pay${query}`, token === undefined ? { outcome } : { token, outcome }), params({ checkoutId: id }));
@@ -180,14 +180,14 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
     it("status accepts the token as Authorization: Bearer (contract cfd5cee: token never in a URL)", async () => {
       const { j } = await create(m); const id = j.data.checkoutId; const t = tokenOf(j.data)!;
       const r = await m.status.GET(new Request(`${B}/checkout/${id}/status`, { headers: { authorization: `Bearer ${t}` } }), params({ checkoutId: id }));
-      expect(r.status, "status ignores Authorization: Bearer and still needs ?token=").toBe(200);
+      expect(r.status, "Bearer token must open status").toBe(200);
       const bad = await m.status.GET(new Request(`${B}/checkout/${id}/status`, { headers: { authorization: `Bearer ${"q".repeat(43)}` } }), params({ checkoutId: id }));
       expect(bad.status).toBe(404);
     });
     it("token opens status (and only that checkout)", async () => {
       const a = await create(m); const b = await create(m);
       const ta = tokenOf(a.j.data);
-      expect(ta, "redirectUrl has no token").toBeTruthy();
+      expect(ta, "accessToken missing from checkout response").toBeTruthy();
       const ok = await m.status.GET(statusReq(a.j.data.checkoutId, ta!), params({ checkoutId: a.j.data.checkoutId }));
       expect(ok.status).toBe(200);
       const cross = await m.status.GET(statusReq(b.j.data.checkoutId, ta!), params({ checkoutId: b.j.data.checkoutId }));
@@ -495,7 +495,7 @@ describe.skipIf(!HAS_ROUTES)("Payments routes (in-process, memory store)", () =>
       expect((await q(a.ref, "q".repeat(43))).status).toBe(404);
       expect((await q(a.ref, b.t)).status, "token of another order must not open this one").toBe(404);
       const bearer = await orders.GET(new Request(`${B}/orders/${a.ref}`, { headers: { authorization: `Bearer ${a.t}` } }), params({ reference: a.ref }));
-      expect(bearer.status, "orders/{ref} only reads ?token= (contradicts cfd5cee: token never in a URL)").toBe(200);
+      expect(bearer.status, "Bearer token must open /orders/{ref}").toBe(200);
     });
   });
 
