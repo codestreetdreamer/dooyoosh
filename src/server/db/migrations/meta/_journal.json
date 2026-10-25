@@ -64,6 +64,13 @@
       "when": 1792713241704,
       "tag": "0008_newsletter_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792713505258,
+      "tag": "0009_convert_expired_conflict_shipping_name",
+      "breakpoints": true
     }
   ]
 }

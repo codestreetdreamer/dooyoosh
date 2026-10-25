@@ -250,6 +250,77 @@ begin
     '00000000-0000-4000-8000-0000000012aa', repeat('2', 64)), 'IDEMPOTENCY_CONFLICT');
   det := pg_temp.expect_error(format('select public.reserve_checkout(%L, %L, now() + interval ''35 min'', %L)', co4,
     jsonb_build_array(jsonb_build_object('variant_id', d, 'quantity', 1)), repeat('2', 64)), 'IDEMPOTENCY_CONFLICT');
+  -- 14. 0009 (Payments P1): reservation expired 1s ago but NOT swept -> conflict (abort: aborted, nothing written;
+  --     record: stock_conflict + released); paid_at before expiry -> paid. Shipping method name copied to the order.
+  insert into public.product_variants (product_id, sku, size) select id, 'FT-E', 'XXL' from public.products where slug = 'ft-prod';
+  perform public.adjust_stock((select id from public.product_variants where sku = 'FT-E'), 3, 'restock', 'ft', null);
+  co4 := pg_temp.mk_checkout(jsonb_build_array(jsonb_build_object('variant_id', (select id from public.product_variants where sku = 'FT-E'), 'quantity', 1)));
+  update public.checkouts set shipping_method_name = 'FT Standard' where id = co4;
+  perform public.reserve_checkout(co4, jsonb_build_array(jsonb_build_object('variant_id', (select id from public.product_variants where sku = 'FT-E'), 'quantity', 1)), now() + interval '35 min');
+  update public.stock_reservations set expires_at = now() - interval '1 second' where checkout_id = co4;
+  select total_cents into tot from public.checkouts where id = co4;
+  res := public.convert_checkout_to_order(co4, jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-exp-abort',
+                                                                  'amount_minor', tot, 'currency', 'UZS'), 'abort');
+  s := pg_temp.stock('FT-E');
+  if res->>'status' <> 'aborted' or exists (select 1 from public.orders where checkout_id = co4) or s.on_hand <> 3 or s.reserved <> 1
+     or (select status from public.stock_reservations where checkout_id = co4) <> 'active' then
+    raise exception 'FAIL 14 abort: % stock %/%', res, s.on_hand, s.reserved; end if;
+  res := public.convert_checkout_to_order(co4, jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-exp-rec',
+                                                                  'amount_minor', tot, 'currency', 'UZS'));
+  s := pg_temp.stock('FT-E');
+  if res->>'status' <> 'stock_conflict' or s.on_hand <> 3 or s.reserved <> 0
+     or (select status from public.stock_reservations where checkout_id = co4) = 'active'
+     or (select status from public.orders where id = (res->>'order_id')::uuid) <> 'stock_conflict'
+     or exists (select 1 from public.inventory_movements where order_id = (res->>'order_id')::uuid) then
+    raise exception 'FAIL 14 record: % stock %/%', res, s.on_hand, s.reserved; end if;
+  if (select shipping_method_name from public.orders where id = (res->>'order_id')::uuid) is distinct from 'FT Standard' then
+    raise exception 'FAIL 14: shipping_method_name not copied'; end if;
+  -- provider says it was paid BEFORE expiry (paid_at < expires_at) -> paid, even though now() is past expires_at
+  co5 := pg_temp.mk_checkout(jsonb_build_array(jsonb_build_object('variant_id', (select id from public.product_variants where sku = 'FT-E'), 'quantity', 1)));
+  perform public.reserve_checkout(co5, jsonb_build_array(jsonb_build_object('variant_id', (select id from public.product_variants where sku = 'FT-E'), 'quantity', 1)), now() + interval '35 min');
+  update public.stock_reservations set expires_at = now() - interval '1 second' where checkout_id = co5;
+  select total_cents into tot from public.checkouts where id = co5;
+  res := public.convert_checkout_to_order(co5, jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-exp-early',
+           'amount_minor', tot, 'currency', 'UZS', 'paid_at', now() - interval '2 seconds'));
+  s := pg_temp.stock('FT-E');
+  if res->>'status' <> 'paid' or s.on_hand <> 2 or s.reserved <> 0 then raise exception 'FAIL 14 early paid_at: % %/%', res, s.on_hand, s.reserved; end if;
+  if (select shipping_method_name from public.orders where id = (res->>'order_id')::uuid) is not null then raise exception 'FAIL 14: null name'; end if;
+  -- boundary: paid_at EXACTLY = expires_at is a conflict (<=), in both modes; explicit paid_at after expiry in abort mode
+  co5 := pg_temp.mk_checkout(jsonb_build_array(jsonb_build_object('variant_id', (select id from public.product_variants where sku = 'FT-E'), 'quantity', 1)));
+  update public.checkouts set shipping_method_name = 'FT Express' where id = co5;
+  perform public.reserve_checkout(co5, jsonb_build_array(jsonb_build_object('variant_id', (select id from public.product_variants where sku = 'FT-E'), 'quantity', 1)), now() + interval '35 min');
+  select total_cents into tot from public.checkouts where id = co5;
+  res := public.convert_checkout_to_order(co5, jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-exp-eq-abort',
+           'amount_minor', tot, 'currency', 'UZS', 'paid_at', (select expires_at from public.stock_reservations where checkout_id = co5)), 'abort');
+  if res->>'status' <> 'aborted' or exists (select 1 from public.orders where checkout_id = co5)
+     or exists (select 1 from public.payments where provider_payment_id = 'pay-exp-eq-abort')
+     or (select status from public.stock_reservations where checkout_id = co5) <> 'active' then
+    raise exception 'FAIL 14 boundary abort: %', res; end if;
+  res := public.convert_checkout_to_order(co5, jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-exp-late-abort',
+           'amount_minor', tot, 'currency', 'UZS', 'paid_at', (select expires_at + interval '1 second' from public.stock_reservations where checkout_id = co5)), 'abort');
+  if res->>'status' <> 'aborted' or exists (select 1 from public.orders where checkout_id = co5) then
+    raise exception 'FAIL 14 late paid_at abort: %', res; end if;
+  res := public.convert_checkout_to_order(co5, jsonb_build_object('provider', 'mock', 'provider_payment_id', 'pay-exp-eq-rec',
+           'amount_minor', tot, 'currency', 'UZS', 'paid_at', (select expires_at from public.stock_reservations where checkout_id = co5)));
+  s := pg_temp.stock('FT-E');
+  if res->>'status' <> 'stock_conflict' or s.on_hand <> 2 or s.reserved <> 0
+     or (select shipping_method_name from public.orders where id = (res->>'order_id')::uuid) is distinct from 'FT Express' then
+    raise exception 'FAIL 14 boundary record: % stock %/%', res, s.on_hand, s.reserved; end if;
+  -- shipping_method_name length check (1..200 or NULL) on both tables
+  for i in 1..4 loop
+    begin
+      case i
+        when 1 then update public.checkouts set shipping_method_name = '' where id = co5;
+        when 2 then update public.checkouts set shipping_method_name = repeat('x', 201) where id = co5;
+        when 3 then update public.orders set shipping_method_name = '' where checkout_id = co5;
+        else update public.orders set shipping_method_name = repeat('x', 201) where checkout_id = co5;
+      end case;
+      raise exception 'FAIL 14: shipping_method_name check % not enforced', i;
+    exception when check_violation then null;
+    end;
+  end loop;
+  raise notice 'PASS 14 0009 expired-not-swept reservation: abort -> aborted (untouched), record -> stock_conflict + released; paid_at = expiry -> conflict (both modes); paid_at < expiry -> paid; shipping_method_name copied + length check';
+
   -- 13. newsletter_attempt (0008): per-email and per-IP windows, prune > 24h
   insert into public.newsletter_attempts (email_hash, created_at) values (repeat('9', 64), now() - interval '25 hours');
   for i in 1..3 loop

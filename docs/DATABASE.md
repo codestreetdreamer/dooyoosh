@@ -24,15 +24,16 @@ Folder `src/server/db/migrations/`, journal `meta/_journal.json`. Apply **in thi
 | `0005_vat_no_default_token_hash_fmt.sql` | generated (incremental) | drops the `vat_rate_bp` default; CHECK `access_token_hash ~ '^[0-9a-f]{64}$'` (checkouts, orders); `checkouts.idempotency_payload_hash` (64-hex, required when `idempotency_key` set); `provider_transactions.seq` (bigint identity) + `provider_time` (bigint ms, nullable, index `(provider, provider_time)`, UNIQUE `(provider, seq)`); `refunds.idempotency_key` uuid → **text** (NOT NULL UNIQUE, 1..200). applied to staging after QA green |
 | `0006_convert_no_vat_fallback.sql` | hand-written (incremental) | `convert_checkout_to_order` modes `record`/`abort` (abort returns `aborted`, writes nothing), no 1200 VAT fallback; `reserve_checkout(…, p_payload_hash)`; `checkout_id_for_idempotency_key()`. applied to staging after QA green |
 | `0007_storage_no_public_list.sql` | hand-written (incremental) | QA P3: drops the anon/authenticated SELECT policy on `storage.objects` for `product-images` (no public listing); adds owner/editor-only SELECT (admin media library). Public URL downloads unaffected. Applied to staging after QA green |
-| `0008_newsletter_attempts.sql` | generated + hand-written | QA P3: DB-backed newsletter rate limit. Table `newsletter_attempts` (`ip_hash` nullable, `email_hash`, 64-hex CHECKs, `created_at`), RLS on, no grants to anon/authenticated/service_role; `newsletter_attempt(ip_hash, email_hash, ip_limit=10, ip_window=10min, email_limit=3, email_window=1h) → boolean` (SECURITY DEFINER, service_role only): advisory-locks per email/IP, prunes rows > 24h, inserts, counts. **LOCAL ONLY until QA green** |
+| `0008_newsletter_attempts.sql` | generated + hand-written | QA P3: DB-backed newsletter rate limit. Table `newsletter_attempts` (`ip_hash` nullable, `email_hash`, 64-hex CHECKs, `created_at`), RLS on, no grants to anon/authenticated/service_role; `newsletter_attempt(ip_hash, email_hash, ip_limit=10, ip_window=10min, email_limit=3, email_window=1h) → boolean` (SECURITY DEFINER, service_role only): advisory-locks per email/IP, prunes rows > 24h, inserts, counts. Applied to staging after QA green on `093e1b9` |
+| `0009_convert_expired_conflict_shipping_name.sql` | hand-written (incremental) | (1) `convert_checkout_to_order`: reservation with `expires_at <= coalesce(p_order.paid_at, now())` is a stock conflict in **both** `record` and `abort` modes (even if the sweeper has not marked it expired yet). (2) `checkouts.shipping_method_name` + `orders.shipping_method_name` (text, NULL or length 1..200); Payments writes the name at checkout insert; convert copies it. **No `refunds.order_id`** — refunds stay linked via `payments`. Seed ids are deterministic UUID v5 (see §7 / `seed/seed_ids.py`); not a schema change. **LOCAL ONLY until QA green** |
 
-Staging `bmigqxmswskihqrkeezh` has 0000–0007 (0000–0004 applied 2026-10-22 23:24, 0005/0006 at 23:47 UTC after QA green on a4e2c69, 0007 at 23:51 UTC after QA green on 5dc4fc8). Later migrations go to staging only after QA green.
+Staging `bmigqxmswskihqrkeezh` has 0000–0008 (0000–0004 applied 2026-10-22 23:24, 0005/0006 at 23:47 UTC after QA green on a4e2c69, 0007 at 23:51 UTC after QA green on 5dc4fc8, 0008 after QA green on `093e1b9`). 0009 stays local until QA green.
 
 Workflow:
 1. Edit `src/server/db/schema/*.ts` → `pnpm db:generate` (new numbered file). Hand-written SQL: `pnpm drizzle-kit generate --custom --name <name>`.
 2. Test locally: `src/server/db/tests/run-all.sh` (see §7).
 3. Apply: `pnpm db:migrate` with `DATABASE_URL`, or the Supabase MCP `apply_migration` with the same names (as done for staging).
-4. Never edit a migration that has been applied to Supabase; add a new one (0000–0007 are frozen: applied to staging). From 0005 on, generation is incremental.
+4. Never edit a migration that has been applied to Supabase; add a new one (0000–0008 are frozen: applied to staging). From 0005 on, generation is incremental.
 5. Staging gets new migrations only after QA gives green.
 
 Supabase-specific: migrations run as `postgres` (table owner). The 0001/0003 grants **revoke Supabase's default ALL grants** from `anon`/`authenticated`; new tables are not exposed until a later migration grants them.
@@ -73,7 +74,8 @@ Errors are `RAISE EXCEPTION '<CODE>' USING ERRCODE = 'P0001', DETAIL = <json>`; 
 - Returns `{"order_id","reference","status":"paid"|"stock_conflict"|"already_converted"|"aborted","order_status","conflict_variant_ids":[...]}` (`aborted`: order_id/reference null).
 - Locks checkout → its reservations → variants (id order) before writing (no deadlocks under parallel webhooks). Verifies provider and **amount + currency = checkout total** (`AMOUNT_MISMATCH`, nothing written).
 - All reservations of THIS checkout `active` → order `paid`: `stock_on_hand -= q`, `stock_reserved -= q`, `inventory_movements(reason 'sale', order_id)`, reservations `converted`, `payments` row `succeeded`, `order_events(payment_received)`, checkout `completed`, `orders.access_token_hash` copied from the checkout.
-- Any reservation not active (released/expired by cron) → `record`: order `stock_conflict`, **no stock change**, `payments` succeeded (refund it), `order_events(stock_conflict)`; `abort`: **writes nothing** and returns `status:'aborted'` + `conflict_variant_ids` (no exception; the caller's transaction stays usable; Payme/Click Perform after expiry → provider error).
+- Any reservation not active (released/expired by cron) **or still `active` but `expires_at <= coalesce(p_order.paid_at, now())`** (0009: expired-but-not-yet-swept) → `record`: order `stock_conflict`, **no stock change**, reservations released, `payments` succeeded (refund it), `order_events(stock_conflict)`; `abort`: **writes nothing** and returns `status:'aborted'` + `conflict_variant_ids` (no exception; the caller's transaction stays usable; Payme/Click Perform after expiry → provider error). Boundary: `paid_at` exactly equal to `expires_at` is a conflict (`<=`) in both modes; `paid_at` strictly before expiry can still pay even if wall-clock `now()` is past expiry.
+- Copies `checkouts.shipping_method_name` → `orders.shipping_method_name` (0009; NULL for pre-0009 / unset rows). CHECK on both tables: NULL or `char_length` 1..200.
 - `order_items.vat_rate_bp` = snapshot `vatRateBp`, else `products.vat_rate_bp` (NOT NULL, no default) — no hardcoded 12 % anywhere.
 - Second call → `already_converted`, nothing changes. A `provider_payment_id` already used for another order → `INVALID_STATE`.
 
@@ -129,11 +131,13 @@ Public URL: `${NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/product-images
 ## 7. Seeds and tests
 - `src/server/db/seed/reference.sql` — market `UZ`/`UZS`, country `UZ` shippable, categories clothing/footwear/accessories (en), **PLACEHOLDER** shipping method `placeholder-standard` (30 000 so'm, free over 1 000 000 so'm). Idempotent.
 - `src/server/db/seed/demo.sql` — **DEMO**: 12 published products (slugs `demo-*`, SKUs `DEMO-*`, IKPU `DEMO-<17 digits>`, prices in tiyin), 40 variants (one sold out: `DEMO-01-XS-IVO`), stock via `adjust_stock('restock')`, 24 images at placeholder paths `demo/<slug>/<n>.jpg` (**files not uploaded yet** → frontend fallback until real photos), 3 published + 1 draft article, 3 tags. Skips if demo data exists.
+- **Deterministic seed ids (0009-b):** `seed/seed_ids.py` prints UUID v5 ids in namespace `uuid5(NAMESPACE_URL, 'https://dooyoosh.uz/seed')` for keys like `product:<slug>`, `variant:<SKU>`, `article:<slug>`, `market:UZ`, … . `reference.sql` / `demo.sql` embed those ids so cleanup + reseed keeps the same primary keys. Not a schema migration.
 - `src/server/db/seed/cleanup_demo.sql` — removes all DEMO rows (incl. test orders/checkouts/provider txns on demo variants); run `psql "$DATABASE_URL" -1 -f cleanup_demo.sql`.
 - Tests (QA: please adopt/port into `tests/db`): `src/server/db/tests/`
-  - `run-all.sh` — fresh local DB (`supabase_emulation.sql` + migrations + seeds), then all tests. Needs a LOCAL Postgres 17 superuser: `PGHOST=127.0.0.1 PGUSER=postgres PGPASSWORD=… ./run-all.sh`.
+  - `run-all.sh` — fresh local DB (`supabase_emulation.sql` + migrations + seeds), then all tests (+ reseed id stability). Needs a LOCAL Postgres 17 superuser: `PGHOST=127.0.0.1 PGUSER=postgres PGPASSWORD=… ./run-all.sh`.
   - `rls_test.sql` — grants + role matrix (anon, customer, editor, fulfilment, owner, inactive admin). Portable: also run on staging; it ends in ROLLBACK.
-  - `functions_test.sql` — reserve/convert/release/adjust/restock/events/IKPU semantics (ROLLBACK).
+  - `functions_test.sql` — reserve/convert/release/adjust/restock/events/IKPU/0009 expired-reservation + `shipping_method_name` semantics (ROLLBACK).
+  - `seed_ids_test.sh` — every seeded row id equals `uuid5(NS, '<kind>:<key>')` from `seed_ids.py`.
   - `concurrency_test.sh` — real parallel sessions (local only): 20× reserve on stock 1, 20× on stock 5, 10× duplicate convert, converts racing the expiry sweep, 10× same idempotencyKey.
 
 ## 8. Public API (Backend-owned routes, `src/app/api/v1/**`)
@@ -154,12 +158,13 @@ column grants (no stock counts) and the `security_invoker` views apply exactly a
 Integration test: `src/server/db/tests/api_smoke.sh` (82 curl checks incl. 400/404/422) against `next dev` + a local DB from `apply-local.sh`.
 Env for the routes: `DATABASE_URL` (server), `NEXT_PUBLIC_SUPABASE_URL` (image URLs), plus whatever `serverEnv()` requires.
 
-### Newsletter rate-limit env (optional; Architect owns `.env.example`)
+### Newsletter rate-limit env (Architect owns `.env.example`; `NEWSLETTER_HASH_SECRET` required in production)
 | Var | Default | Meaning |
 |---|---|---|
 | `TRUSTED_IP_HEADER` | `x-vercel-forwarded-for` | the only header trusted for the client IP (first comma-separated hop). Fallback `x-real-ip` **only when `VERCEL=1`**. No trusted IP ⇒ per-email limit only (spoofable headers never pick the key). |
-| `NEWSLETTER_HASH_SECRET` | unset | HMAC-SHA256 key for `ip_hash`/`email_hash` (recommended in prod, ≥32 random bytes). Unset ⇒ domain-separated sha256 (`dooyoosh:newsletter:{ip|email}:value`). Separate from `ORDER_TOKEN_SECRET` on purpose. |
+| `NEWSLETTER_HASH_SECRET` | unset in dev | HMAC-SHA256 key for `ip_hash`/`email_hash`. **Required in production** by `serverEnv()` (≥32 chars, Architect `dfd76c2`). Dev/test may omit it → domain-separated sha256 (`dooyoosh:newsletter:{ip|email}:value`); a set-but-too-short secret throws. Separate from `ORDER_TOKEN_SECRET` on purpose. |
 | `VERCEL` | set by Vercel | enables the `x-real-ip` fallback |
+
 
 ## 9. Owner actions (Supabase dashboard, not migrations)
 - **Disable public sign-ups**: Authentication → Sign In / Providers → turn off "Allow new users to sign up" (admins are invited/created by the owner; customers check out as guests). Not expressible as a migration.

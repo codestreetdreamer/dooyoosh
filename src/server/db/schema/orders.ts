@@ -32,6 +32,8 @@ export const checkouts = pgTable("checkouts", {
   shippingAddress: jsonb("shipping_address").notNull(),
   billingAddress: jsonb("billing_address"),
   shippingMethodId: uuid("shipping_method_id").notNull().references(() => shippingMethods.id),
+  /** 0009: display-name snapshot at checkout time (Payments writes it; nullable for pre-0009 rows); copied to the order by convert */
+  shippingMethodName: text("shipping_method_name"),
   // client-supplied UUID: retries of the same submit return the same checkout
   idempotencyKey: uuid("idempotency_key").unique(),
   // 0005: hex sha256 of the canonical createCheckout payload (computed by Payments); same key + different hash => IDEMPOTENCY_CONFLICT (409)
@@ -62,6 +64,7 @@ export const checkouts = pgTable("checkouts", {
   check("checkouts_locale_chk", localeCheck(t.locale)),
   index("checkouts_status_expires_idx").on(t.status, t.expiresAt),
   index("checkouts_shipping_method_idx").on(t.shippingMethodId),
+  check("checkouts_shipping_method_name_len", sql`${t.shippingMethodName} IS NULL OR char_length(${t.shippingMethodName}) BETWEEN 1 AND 200`),
 ]);
 
 export const orders = pgTable("orders", {
@@ -81,6 +84,8 @@ export const orders = pgTable("orders", {
   shippingAddress: jsonb("shipping_address").notNull(),
   billingAddress: jsonb("billing_address"),
   shippingMethodId: uuid("shipping_method_id").notNull().references(() => shippingMethods.id),
+  /** 0009: display-name snapshot at checkout time (Payments writes it; nullable for pre-0009 rows); copied to the order by convert */
+  shippingMethodName: text("shipping_method_name"),
   accessTokenHash: text("access_token_hash").notNull(),
   placedAt: timestamp("placed_at", { withTimezone: true }).notNull().defaultNow(),
   paidAt: timestamp("paid_at", { withTimezone: true }),
@@ -96,6 +101,7 @@ export const orders = pgTable("orders", {
   index("orders_status_idx").on(t.status, t.createdAt),
   index("orders_email_idx").on(t.email),
   index("orders_shipping_method_idx").on(t.shippingMethodId),
+  check("orders_shipping_method_name_len", sql`${t.shippingMethodName} IS NULL OR char_length(${t.shippingMethodName}) BETWEEN 1 AND 200`),
 ]);
 
 export const orderItems = pgTable("order_items", {

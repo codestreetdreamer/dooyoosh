@@ -64,4 +64,10 @@ Numbered B18–B22 because B17 above is already used (checkouts.idempotency_key)
 - B26 `refunds.idempotency_key` uuid → text NOT NULL UNIQUE (1..200). ✅ 0005
 - B27 convert conflict modes `record` (default) | `abort`; abort returns `aborted` and writes nothing. ✅ 0006
 - B28 `checkouts.idempotency_payload_hash` + `IDEMPOTENCY_CONFLICT` (reserve_checkout p_payload_hash, `checkout_id_for_idempotency_key`). ✅ 0005/0006 — needs an ERROR_CODES entry (409) from the Architect.
-- B29 `newsletter_attempts` (hashed ip/email, RLS on, no API-role grants) + `newsletter_attempt()` (prune >24h + insert + count, service_role) replacing the in-memory newsletter limiter; IP only from `TRUSTED_IP_HEADER`. ⏳ 0008 local only
+- B29 `newsletter_attempts` (hashed ip/email, RLS on, no API-role grants) + `newsletter_attempt()` (prune >24h + insert + count, service_role) replacing the in-memory newsletter limiter; IP only from `TRUSTED_IP_HEADER`. ✅ 0008 (staging after QA green on `093e1b9`)
+
+## F. Backend & Database — local migration 0009 (NOT on staging until QA green)
+- B30 `convert_checkout_to_order`: treat `stock_reservations.expires_at <= coalesce(p_order.paid_at, now())` as a conflict in **both** `record` and `abort` modes (expired-but-not-swept). Same signature/lock order. ⏳ 0009 local only
+- B31 `checkouts.shipping_method_name` + `orders.shipping_method_name` (text, NULL or length 1..200); convert copies checkout → order. Payments writes the name at checkout insert. ⏳ 0009 local only
+- B32 Seed ids: deterministic UUID v5 via `seed/seed_ids.py` (`uuid5(NS, '<kind>:<key>')`); `reference.sql` / `demo.sql` + `tests/seed_ids_test.sh`. Seed-only, no schema change. ⏳ with 0009
+- **Not in 0009 (Architect):** do **not** add `refunds.order_id` — refunds stay linked through `payments.payment_id` only.

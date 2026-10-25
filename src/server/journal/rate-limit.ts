@@ -7,12 +7,28 @@
  */
 import "server-only";
 import { createHash, createHmac } from "node:crypto";
+import { serverEnv } from "@/lib/env";
 import { getSql } from "../db/client";
 
 export const NEWSLETTER_LIMITS = { ipLimit: 10, ipWindowMinutes: 10, emailLimit: 3, emailWindowMinutes: 60 } as const;
 
-/** Trusted client IP or null. Reads process.env at call time (optional vars; not part of dbEnv()). */
-export function clientIp(headers: Headers, env: Record<string, string | undefined> = process.env): string | null {
+type LimiterEnv = { TRUSTED_IP_HEADER?: string; NEWSLETTER_HASH_SECRET?: string; VERCEL?: string };
+
+/** Production: the validated serverEnv() (TRUSTED_IP_HEADER default + NEWSLETTER_HASH_SECRET required, >= 32 chars).
+ *  Dev/test: the same keys from process.env, because these routes boot with dbEnv() only (main 0e6bdbc). */
+function limiterEnv(): LimiterEnv {
+  if (process.env.NODE_ENV === "production") {
+    const e = serverEnv();
+    return { TRUSTED_IP_HEADER: e.TRUSTED_IP_HEADER, NEWSLETTER_HASH_SECRET: e.NEWSLETTER_HASH_SECRET, VERCEL: process.env.VERCEL };
+  }
+  const secret = process.env.NEWSLETTER_HASH_SECRET || undefined;
+  // same rule as env.ts (min 32) so a short dev secret fails loudly instead of silently weakening the hash
+  if (secret !== undefined && secret.length < 32) throw new Error("Invalid environment: NEWSLETTER_HASH_SECRET must be at least 32 characters");
+  return { TRUSTED_IP_HEADER: process.env.TRUSTED_IP_HEADER || undefined, NEWSLETTER_HASH_SECRET: secret, VERCEL: process.env.VERCEL };
+}
+
+/** Trusted client IP or null. */
+export function clientIp(headers: Headers, env: LimiterEnv = limiterEnv()): string | null {
   const name = (env.TRUSTED_IP_HEADER || "x-vercel-forwarded-for").toLowerCase();
   const first = (v: string | null) => v?.split(",")[0]?.trim() || null;
   const ip = first(headers.get(name));
@@ -21,8 +37,8 @@ export function clientIp(headers: Headers, env: Record<string, string | undefine
   return null;
 }
 
-/** HMAC-SHA256 with NEWSLETTER_HASH_SECRET when set (recommended), else domain-separated sha256. Lower-case hex. */
-export function hashKey(kind: "ip" | "email", value: string, env: Record<string, string | undefined> = process.env): string {
+/** HMAC-SHA256 with NEWSLETTER_HASH_SECRET (required in production by env.ts); dev without it: domain-separated sha256. */
+export function hashKey(kind: "ip" | "email", value: string, env: LimiterEnv = limiterEnv()): string {
   const msg = `dooyoosh:newsletter:${kind}:${value}`;
   const secret = env.NEWSLETTER_HASH_SECRET;
   return secret ? createHmac("sha256", secret).update(msg).digest("hex") : createHash("sha256").update(msg).digest("hex");
