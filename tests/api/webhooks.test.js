@@ -12,6 +12,11 @@ async function newCheckout() {
 }
 
 describe.skipIf(!UP)(`webhooks${UP ? "" : ` [SKIPPED: ${DOWN_REASON}]`}`, () => {
+  // Only the configured provider is mounted (404 for the others). Deep Payme/Click tests need PAYMENT_PROVIDER=payme|click.
+  const PROVIDER = (env("PAYMENT_PROVIDER") || env("QA_PAYMENT_PROVIDER") || "mock").toLowerCase();
+  const hasPayme = () => PROVIDER === "payme";
+  const hasClick = () => PROVIDER === "click";
+
   beforeAll(async () => { f = await buyable(); });
 
   // ---------- mock (HMAC: x-mock-signature: t=<s>,v1=hex(HMAC_SHA256(secret, "<t>.<raw>"))) ----------
@@ -90,7 +95,16 @@ describe.skipIf(!UP)(`webhooks${UP ? "" : ` [SKIPPED: ${DOWN_REASON}]`}`, () => 
   });
 
   // ---------- Payme Merchant API (JSON-RPC, Basic auth "Paycom:<KEY>") ----------
-  describe("payme", () => {
+  it("payme/click routes are 404 when PAYMENT_PROVIDER=mock (only the configured provider is mounted)", async (ctx) => {
+    if (PROVIDER !== "mock") ctx.skip(`PAYMENT_PROVIDER=${PROVIDER}`);
+    for (const p of ["payme", "click"]) {
+      const r = await call("POST", `/webhooks/${p}`, { body: {} });
+      skipIfMissing(ctx, r, `webhooks/${p}`);
+      expect(r.status, p).toBe(404);
+    }
+  });
+
+  describe.skipIf(!hasPayme())("payme", () => {
     const key = env("PAYME_KEY"), login = env("PAYME_LOGIN") || "Paycom", field = env("PAYME_ACCOUNT_FIELD") || "order_id";
     const rpc = (method, params, auth) => call("POST", "/webhooks/payme", {
       raw: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
@@ -165,7 +179,7 @@ describe.skipIf(!UP)(`webhooks${UP ? "" : ` [SKIPPED: ${DOWN_REASON}]`}`, () => 
   });
 
   // ---------- Click SHOP API (Prepare action=0 / Complete action=1, MD5 sign_string, amount in so'm) ----------
-  describe("click", () => {
+  describe.skipIf(!hasClick())("click", () => {
     const sid = env("CLICK_SERVICE_ID"), secret = env("CLICK_SECRET_KEY");
     const signTime = () => new Date().toISOString().replace("T", " ").slice(0, 19);
     const form = (o) => new URLSearchParams(Object.entries(o).map(([k, v]) => [k, String(v)])).toString();

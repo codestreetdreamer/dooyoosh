@@ -30,8 +30,13 @@ PSQL=("$PG_BIN/psql" "$PAYMENTS_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q)
 if [ -n "$STARTED_PG" ]; then
   [ -f "$EMU" ] && "${PSQL[@]}" -f "$EMU" >/dev/null
   for tag in $(node -e "for (const e of require('$MIG/meta/_journal.json').entries) console.log(e.tag)"); do "${PSQL[@]}" -f "$MIG/$tag.sql" >/dev/null; echo "migrated $tag"; done
-  for s in reference demo; do [ -f "$SEED/$s.sql" ] && "${PSQL[@]}" -f "$SEED/$s.sql" >/dev/null && echo "seeded $s"; done
-  "${PSQL[@]}" -f "$ROOT/tests/api/fixtures/catalog-hidden.sql" && echo "seeded QA hidden rows"
+  # -1 = one transaction per file: demo.sql uses TEMP TABLE seed_ids ON COMMIT DROP (needs the inserts in the same txn).
+  for s in reference demo; do
+    if [ -f "$SEED/$s.sql" ]; then
+      "$PG_BIN/psql" "$PAYMENTS_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -1 -q -f "$SEED/$s.sql" >/dev/null && echo "seeded $s" || { echo "seed $s FAILED" >&2; exit 1; }
+    fi
+  done
+  "$PG_BIN/psql" "$PAYMENTS_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -1 -q -f "$ROOT/tests/api/fixtures/catalog-hidden.sql" && echo "seeded QA hidden rows"
 fi
 
 # Fake, local-only secrets. NODE_ENV=production (next start) => strict serverEnv.
