@@ -5,15 +5,71 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1792710353586,
+      "when": 1792711313731,
       "tag": "0000_init",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1792710354274,
+      "when": 1792711314565,
       "tag": "0001_security_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792711315419,
+      "tag": "0002_stock_order_functions",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792711316845,
+      "tag": "0003_rls_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792711318044,
+      "tag": "0004_storage_media",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792712347246,
+      "tag": "0005_vat_no_default_token_hash_fmt",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792712347960,
+      "tag": "0006_convert_no_vat_fallback",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792712892235,
+      "tag": "0007_storage_no_public_list",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792713241704,
+      "tag": "0008_newsletter_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792713505258,
+      "tag": "0009_convert_expired_conflict_shipping_name",
       "breakpoints": true
     }
   ]

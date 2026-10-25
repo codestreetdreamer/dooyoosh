@@ -20,8 +20,16 @@ Rule: nothing is "done" until its row here is ✅. Each agent updates only its o
 |---|---|---|
 | Root config: package.json (pnpm, Next 15, React 19, TS strict), tsconfig `@/*`, next.config.ts, eslint/prettier/postcss, .gitignore, `pnpm install` ok, `pnpm typecheck` passes | ✅ 2026-10-22 | Architect |
 | Next.js app scaffold (`src/app/[locale]/layout.tsx`, pages, `src/lib/i18n.ts`, tokens) — `pnpm build` cannot pass until this exists | ❌ | Frontend & Design |
-| Drizzle schema + 0000_init.sql | ✅ reported | Backend & Database |
-| RLS migration, append-only inventory_movements | ❌ | Backend & Database |
+| Drizzle schema + 0000_init.sql (31 tables, B1–B16, B18–B22) | ✅ 2026-10-22, applied to staging bmigqxmswskihqrkeezh | Backend & Database |
+| Migrations 0001_security_core, 0002_stock_order_functions, 0003_rls_policies, 0004_storage_media (RLS on all tables, append-only inventory_movements, SECURITY DEFINER stock/order fns, bucket product-images) | ✅ 2026-10-22, applied to staging; advisors: security only INFO rls_enabled_no_policy (intentional, server-only tables), performance only INFO unused_index (empty DB) | Backend & Database |
+| Seeds: reference (UZ/UZS, PLACEHOLDER shipping) + DEMO catalogue (12 products, 4 articles; removable via seed/cleanup_demo.sql) | ✅ applied to staging; DEMO data must be removed before launch ❌; demo product images not uploaded ❌ | Backend & Database |
+| DB tests (src/server/db/tests: RLS, functions, concurrency) | ✅ local all pass; RLS + functions also pass on staging (rolled back) | Backend & Database |
+| docs/DATABASE.md, src/server/db/supabase.types.ts | ✅ 2026-10-22 | Backend & Database |
+| Migrations 0005/0006 (VAT no default, token/idempotency hashes, provider_transactions seq/time, convert record/abort) | ✅ applied to staging 2026-10-22 23:47 UTC after QA green; advisors INFO only | Backend & Database |
+| Migration 0007 (product-images: no public listing, QA P3) | ✅ applied to staging 2026-10-22 23:51 UTC after QA green; advisors INFO only | Backend & Database |
+| Migration 0008 (DB-backed newsletter rate limit, QA P3) | ⏳ local only, DB + curl suites green; apply to staging after QA green. Env `TRUSTED_IP_HEADER`, `NEWSLETTER_HASH_SECRET` (optional) → Architect for `.env.example` | Backend & Database |
+| Public API routes (products, facets, categories, search, articles, cart/validate, shipping/options, newsletter) | ✅ local curl suite 83/83; admin endpoints ❌ not started | Backend & Database |
+| Disable public sign-ups in Supabase dashboard (Authentication → Sign In / Providers) | ❌ owner action (not a migration) | Mirfozil |
 | `.env.example` + Zod env validation (`src/lib/env.ts`, refuses `mock` in production/live) | ✅ 2026-10-22 | Architect (per OWNERSHIP.md) |
 | API contracts `src/contracts/*` (37 endpoints) + `src/lib/{errors,money,api-client}.ts` + docs/CONTRACTS.md | ✅ 2026-10-22 | Architect |
 | Schema review → docs/SCHEMA_DELTA.md (items for Backend & Database) | ✅ 2026-10-22 | Architect |
