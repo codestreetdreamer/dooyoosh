@@ -59,7 +59,13 @@ describe.skipIf(!UP)(`catalog attacks${UP ? "" : ` [SKIPPED: ${DOWN_REASON}]`}`,
       if (!HIDDEN_V.length) ctx.skip("QA_HIDDEN_VARIANT_IDS not set");
       const r = await call("POST", "/cart/validate", { body: { items: HIDDEN_V.map((variantId) => ({ variantId, quantity: 1 })) } });
       skipMissing(ctx, r); expect(r.status).toBe(200);
-      for (const l of r.json.data.lines) { expect(l.available, l.variantId).toBe(false); expect(l.maxQuantity).toBe(0); }
+      for (const l of r.json.data.lines) {
+        expect(l.available, l.variantId).toBe(false);
+        expect(l).toHaveProperty("lowStock");
+        expect(typeof l.lowStock).toBe("boolean");
+        expect(l).not.toHaveProperty("maxQuantity");
+        expect(["out_of_stock", "insufficient_stock", "inactive", "unpublished", "not_found"]).toContain(l.issue);
+      }
       expect(r.json.data.allAvailable).toBe(false);
       noLeak(r, "/cart/validate");
     });
