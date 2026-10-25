@@ -12,7 +12,7 @@ const base = {
   NODE_ENV: "production", DATABASE_URL: "postgres://u:p@localhost:5432/db", SUPABASE_SERVICE_ROLE_KEY: "x", NEXT_PUBLIC_SUPABASE_URL: "https://x.supabase.co",
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "x", NEXT_PUBLIC_SITE_URL: "https://shop.example", EMAIL_FROM: "a@b.c", RESEND_API_KEY: "x", CRON_SECRET: "c".repeat(32),
   ORDER_TOKEN_SECRET: "o".repeat(40), PAYMENT_WEBHOOK_SECRET: "w".repeat(32), PAYMENTS_STORE: "postgres", DEFAULT_CURRENCY: "UZS", NEWSLETTER_HASH_SECRET: "n".repeat(32), NEXT_PUBLIC_DEFAULT_CURRENCY: "UZS",
-  PAYME_MERCHANT_ID: "m", PAYME_KEY: "k".repeat(20), CLICK_SERVICE_ID: "1", CLICK_MERCHANT_ID: "2", CLICK_SECRET_KEY: "s".repeat(10),
+  PAYME_MERCHANT_ID: "m", PAYME_KEY: "k".repeat(20), PAYME_LOGIN: "Paycom", CLICK_SERVICE_ID: "1", CLICK_MERCHANT_ID: "2", CLICK_SECRET_KEY: "s".repeat(10),
 };
 
 describe.skipIf(!HAS)("env.ts payment-mode guards", () => {

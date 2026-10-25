@@ -22,7 +22,7 @@ export async function addToBag(page, slug = PRODUCT, { pick = "available" } = {}
 
 export async function fillCheckout(page, { country = "UZ" } = {}) {
   await page.goto(`/${L}/checkout`, { waitUntil: "networkidle" });
-  await page.getByLabel(/^email/i).fill("qa@dooyoosh.test");
+  await page.locator('main, form').getByLabel(/^email/i).first().fill("qa@dooyoosh.test");
   await page.getByLabel(/^full name/i).fill("QA Tester");
   await page.getByLabel(/^address$/i).fill("Amir Temur 1");
   await page.getByLabel(/^city$/i).fill("Tashkent");

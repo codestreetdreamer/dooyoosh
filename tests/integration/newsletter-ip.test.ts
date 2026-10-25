@@ -46,7 +46,7 @@ describe.skipIf(!HAS)("newsletter client IP + hashing (0008)", () => {
       NEXT_PUBLIC_SUPABASE_URL: "https://x.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "x", NEXT_PUBLIC_SITE_URL: "https://shop.example",
       EMAIL_FROM: "a@b.c", RESEND_API_KEY: "x", CRON_SECRET: "c".repeat(32), ORDER_TOKEN_SECRET: "o".repeat(40),
       PAYMENT_WEBHOOK_SECRET: "w".repeat(32), PAYMENTS_STORE: "postgres", PAYMENT_PROVIDER: "payme", PAYMENT_MODE: "sandbox",
-      NEXT_PUBLIC_PAYMENT_MODE: "sandbox", DEFAULT_CURRENCY: "UZS", PAYME_MERCHANT_ID: "m", PAYME_KEY: "k".repeat(20),
+      NEXT_PUBLIC_PAYMENT_MODE: "sandbox", DEFAULT_CURRENCY: "UZS", PAYME_MERCHANT_ID: "m", PAYME_KEY: "k".repeat(20), PAYME_LOGIN: "Paycom",
       CLICK_SERVICE_ID: "1", CLICK_MERCHANT_ID: "2", CLICK_SECRET_KEY: "s".repeat(10), NEWSLETTER_HASH_SECRET: "n".repeat(32),
     };
     const { NEWSLETTER_HASH_SECRET: _n, ...noHash } = base as any;
