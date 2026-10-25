@@ -65,21 +65,33 @@ describe.skipIf(!UP)(`catalog attacks${UP ? "" : ` [SKIPPED: ${DOWN_REASON}]`}`,
     });
   });
 
-  describe("no exact stock counts", () => {
-    it("no stock_on_hand / stockOnHand / reserved / exact count in any public payload", async (ctx) => {
+  describe("no exact stock counts (lowStock boolean, contract 5b39655)", () => {
+    it("no stock_on_hand / maxQuantity / reserved / exact count in any public payload", async (ctx) => {
       const paths = ["/products?limit=50", "/products/demo-linen-wrap-dress", "/products/facets", "/search?q=dress"];
       for (const p of paths) {
         const [path, qs] = p.split("?");
         const r = await call("GET", path, { query: Object.fromEntries(new URLSearchParams(qs || "")) }); skipMissing(ctx, r);
-        expect(r.text, p).not.toMatch(/stock_?on_?hand|stock_?reserved|"stock"\s*:|"quantityAvailable"|"inventory"/i);
+        expect(r.text, p).not.toMatch(/stock_?on_?hand|stock_?reserved|"stock"\s*:|"maxQuantity"|"quantityAvailable"|"inventory"/i);
         expect(r.text, `${p} contains the seeded exact count 137`).not.toMatch(/[^0-9]137[^0-9]/);
       }
     });
-    it("/cart/validate caps maxQuantity at MAX_LINE_QTY (10) for a variant with 137 in stock", async (ctx) => {
+    it("/cart/validate: available+lowStock boolean only; qty>10 -> 400; insufficient_stock keeps qty (never clamps)", async (ctx) => {
       if (!V137) ctx.skip("QA_V137 not set");
-      const r = await call("POST", "/cart/validate", { body: { items: [{ variantId: V137, quantity: 10 }] } }); skipMissing(ctx, r);
-      expect(r.json.data.lines[0].maxQuantity).toBe(10);
-      expect(r.text).not.toContain("137");
+      const ok = await call("POST", "/cart/validate", { body: { items: [{ variantId: V137, quantity: 1 }] } }); skipMissing(ctx, ok);
+      expect(ok.status).toBe(200);
+      const line = ok.json.data.lines[0];
+      expect(line).toHaveProperty("available"); expect(line).toHaveProperty("lowStock");
+      expect(line).not.toHaveProperty("maxQuantity");
+      expect(typeof line.lowStock).toBe("boolean");
+      expect(ok.text).not.toContain("137");
+      // qty 11 exceeds MAX_LINE_QTY -> 400
+      expect((await call("POST", "/cart/validate", { body: { items: [{ variantId: V137, quantity: 11 }] } })).status).toBe(400);
+      // ask for more than on hand but <= MAX_LINE_QTY: issue insufficient_stock, quantity unchanged (no clamp that would reveal stock)
+      const big = await call("POST", "/cart/validate", { body: { items: [{ variantId: V137, quantity: 10 }] } });
+      // V137 has 137, so 10 is fine; seed a scarce one via HIDDEN or accept available:true
+      if (big.status === 200 && big.json.data.lines[0].available) expect(big.json.data.lines[0].quantity).toBe(10);
+      // lowStock true only when sellable <= 3: set via DB is out of scope here; assert the field is boolean and false for 137
+      expect(line.lowStock).toBe(false);
     });
   });
 

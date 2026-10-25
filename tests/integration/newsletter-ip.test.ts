@@ -39,8 +39,19 @@ describe.skipIf(!HAS)("newsletter client IP + hashing (0008)", () => {
     expect(v).toBe(createHmac("sha256", env.NEWSLETTER_HASH_SECRET).update("dooyoosh:newsletter:ip:203.0.113.9").digest("hex"));
     expect(hashKey("email", "203.0.113.9", env)).not.toBe(v);
   });
-  it("production requires NEWSLETTER_HASH_SECRET (unkeyed sha256 of an IPv4 is brute-forceable in seconds)", async () => {
-    const envSrc = fs.readFileSync(path.resolve(__dirname, "../../src/lib/env.ts"), "utf8");
-    expect(envSrc, "NEWSLETTER_HASH_SECRET not validated in env.ts").toMatch(/NEWSLETTER_HASH_SECRET/);
+  it("production requires NEWSLETTER_HASH_SECRET (>=32 chars)", async () => {
+    const { parseServerEnv } = await import("@/lib/env") as any;
+    const base = {
+      NODE_ENV: "production", DATABASE_URL: "postgres://u:p@localhost:5432/db", SUPABASE_SERVICE_ROLE_KEY: "x",
+      NEXT_PUBLIC_SUPABASE_URL: "https://x.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "x", NEXT_PUBLIC_SITE_URL: "https://shop.example",
+      EMAIL_FROM: "a@b.c", RESEND_API_KEY: "x", CRON_SECRET: "c".repeat(32), ORDER_TOKEN_SECRET: "o".repeat(40),
+      PAYMENT_WEBHOOK_SECRET: "w".repeat(32), PAYMENTS_STORE: "postgres", PAYMENT_PROVIDER: "payme", PAYMENT_MODE: "sandbox",
+      NEXT_PUBLIC_PAYMENT_MODE: "sandbox", DEFAULT_CURRENCY: "UZS", PAYME_MERCHANT_ID: "m", PAYME_KEY: "k".repeat(20),
+      CLICK_SERVICE_ID: "1", CLICK_MERCHANT_ID: "2", CLICK_SECRET_KEY: "s".repeat(10), NEWSLETTER_HASH_SECRET: "n".repeat(32),
+    };
+    const { NEWSLETTER_HASH_SECRET: _n, ...noHash } = base as any;
+    expect(() => parseServerEnv(noHash)).toThrow(/NEWSLETTER_HASH_SECRET/);
+    expect(() => parseServerEnv({ ...base, NEWSLETTER_HASH_SECRET: "short" })).toThrow();
+    expect(() => parseServerEnv({ ...base, NEWSLETTER_HASH_SECRET: "n".repeat(32) })).not.toThrow();
   });
 });

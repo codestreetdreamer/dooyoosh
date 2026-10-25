@@ -91,12 +91,9 @@ describe("convert_checkout_to_order (0002)", () => {
     await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]);
     await p.query("UPDATE stock_reservations SET expires_at = now()-interval '1 min' WHERE checkout_id=$1", [checkoutId]);
     const r = (await p.query("SELECT public.convert_checkout_to_order($1,$2::jsonb) r", [checkoutId, ord(ref())])).rows[0].r;
-    // §12.5 only requires stock_conflict for NON-active reservations; an expired-but-unswept one still holds the unit,
-    // so 'paid' is not an oversell. Provider adapters must refuse Perform/Complete after expiry (tests/integration).
-    expect(["paid", "stock_conflict"]).toContain(r.status);
-    const s = await stock(v);
-    expect(s.stock_on_hand).toBeGreaterThanOrEqual(s.stock_reserved);
-    expect(s).toEqual(r.status === "paid" ? { stock_on_hand: 0, stock_reserved: 0 } : { stock_on_hand: 1, stock_reserved: 0 });
+    // 0009: expires_at <= paid_at => stock_conflict even if the sweeper has not marked it expired.
+    expect(r.status).toBe("stock_conflict");
+    expect(await stock(v)).toEqual({ stock_on_hand: 1, stock_reserved: 0 });
   });
 });
 
@@ -173,8 +170,8 @@ describe("0002 server-side tamper checks (QA)", () => {
   });
 });
 
-describe("[OPEN — Backend 0009] strict: expired reservation must not convert", () => {
-  it("expired-but-not-yet-swept reservation (expires_at < now) -> stock_conflict (Perform/Complete after expiry never sells)", async (ctx) => {
+describe("0009: expired reservation must not convert", () => {
+  it("expired-but-not-yet-swept reservation (expires_at <= paid_at) -> stock_conflict (0009)", async (ctx) => {
     if (!has.convert_checkout_to_order) ctx.skip();
     const v = await seedVariant(p, { onHand: 1 }); const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
     await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]);

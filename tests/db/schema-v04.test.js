@@ -135,3 +135,18 @@ describe("other SCHEMA_DELTA B items", () => {
     expect(rows.length).toBe(1);
   });
 });
+
+describe("0009 shipping_method_name snapshot", () => {
+  it("checkouts and orders have shipping_method_name (1..200 or NULL) and convert copies it", async () => {
+    for (const t of ["checkouts", "orders"]) expect(await hasColumn(p, t, "shipping_method_name")).toBe(true);
+    const v = await seedVariant(p, { onHand: 1 });
+    // seedCheckout may not set the column; set it explicitly then convert
+    const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
+    await p.query("UPDATE checkouts SET shipping_method_name='Tashkent courier' WHERE id=$1", [checkoutId]);
+    await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, JSON.stringify([{ variant_id: v, quantity: 1 }])]);
+    const r = (await p.query("SELECT public.convert_checkout_to_order($1,$2::jsonb) r", [checkoutId, JSON.stringify({ reference: "DY-20261025-AAAAA", provider: "mock", provider_payment_id: "pp-1", amount_minor: 125000000, currency: "UZS" })])).rows[0].r;
+    expect(r.status).toBe("paid");
+    expect((await p.query("SELECT shipping_method_name FROM orders WHERE checkout_id=$1", [checkoutId])).rows[0].shipping_method_name).toBe("Tashkent courier");
+    await expect(p.query("UPDATE checkouts SET shipping_method_name='' WHERE id=$1", [checkoutId])).rejects.toMatchObject({ code: "23514" });
+  });
+});
