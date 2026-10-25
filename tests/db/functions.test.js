@@ -181,3 +181,19 @@ describe("0009: expired reservation must not convert", () => {
     expect(await stock(v)).toEqual({ stock_on_hand: 1, stock_reserved: 0 });
   });
 });
+
+describe("0009 shipping_method_name snapshot", () => {
+  it("checkouts/orders have shipping_method_name; convert copies it; empty string rejected", async (ctx) => {
+    if (!has.convert_checkout_to_order) ctx.skip();
+    const cols = await p.query(`SELECT table_name FROM information_schema.columns WHERE column_name='shipping_method_name' AND table_schema='public'`);
+    expect(cols.rows.map((r) => r.table_name).sort()).toEqual(["checkouts", "orders"]);
+    const v = await seedVariant(p, { onHand: 1 });
+    const { checkoutId } = await seedCheckout(p, { lines: [[v, 1]] });
+    await p.query("UPDATE checkouts SET shipping_method_name='Tashkent courier' WHERE id=$1", [checkoutId]);
+    await p.query("SELECT public.reserve_checkout($1,$2::jsonb, now()+interval '35 min')", [checkoutId, items(v, 1)]);
+    const r = (await p.query("SELECT public.convert_checkout_to_order($1,$2::jsonb) r", [checkoutId, ord(ref())])).rows[0].r;
+    expect(r.status).toBe("paid");
+    expect((await p.query("SELECT shipping_method_name FROM orders WHERE checkout_id=$1", [checkoutId])).rows[0].shipping_method_name).toBe("Tashkent courier");
+    await expect(p.query("UPDATE checkouts SET shipping_method_name='' WHERE id=$1", [checkoutId])).rejects.toMatchObject({ code: "23514" });
+  });
+});
