@@ -4,4 +4,4 @@
  */
 export * from "@/contracts/payments";
 export type { CheckoutSnapshotLine, Totals } from "@/contracts/checkout";
-export type { InventoryService, ConvertResult, ConvertOrderInput, ReserveLine, ReleaseReason, TxLike } from "@/contracts/inventory";
+export type { InventoryService, ConvertResult, ConvertOrderInput, ReserveLine, ReserveResult, ReleaseReason, TxLike, AdjustStockInput } from "@/contracts/inventory";

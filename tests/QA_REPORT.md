@@ -1,39 +1,70 @@
-# DOOYOOSH — QA & Security report #1 (2026-10-22, 23:0x UTC)
+# DOOYOOSH — QA & Security report (updated 2026-10-25)
 
-**What was tested:** `src/server/db/migrations/0000_init.sql` as it was at 00:58 box time (spec v0.3), applied to a fresh, throwaway **local Postgres 17** cluster (`/usr/lib/postgresql/17/bin`, own data dir, port 54329). Supabase roles `anon`/`authenticated`/`service_role` were emulated, with Supabase's default table GRANTs. The real Supabase project was **not touched**.
-**Caveat:** Backend is regenerating the migration right now (the `migrations/` dir was briefly missing after the run, and `schema/*.ts` now has `bigint`, `profiles` and `idempotency_key`). Rerun with `cd tests/db && pnpm i && pnpm test`. The harness applies whatever is in `migrations/`, plus `src/server/db/tests/supabase_emulation.sql` if present.
+Branch under test: `feat/qa` @ `da083dd` (worktree `/workspace/dooyoosh-qa`). Staging Supabase was **not** called for this update. Evidence is from local git history, `/workspace/review/integration/trial-*`, and on-disk Playwright artifacts under `tests/e2e/artifacts/`.
 
-**Result: 99 tests = 59 passed, 15 failed, 25 skipped (blocked).** 2 of the passing tests are HAZARD tests: they pass *because* the hazard exists.
+Report #1 (2026-10-22) covered migration `0000_init` only; many of those P0/P1 schema/RLS items were addressed in later Backend migrations (0001–0009) and are not re-listed here unless still open with fresh evidence.
 
-## Passed (actually ran)
-- Inventory race, 20 real concurrent connections: last 1 unit → exactly 1 reservation; stock 3 × qty 2 → exactly 1; stock 5 → exactly 5, never oversold; inactive variant never reserved; a naive unguarded UPDATE is rejected by the CHECK (23514).
-- Idempotency: `payment_events` PK(provider,event_id); a duplicate insert is a no-op; 10 concurrent identical deliveries → exactly 1 row; the same event_id under payme and click is accepted; a 2nd order for the same checkout is rejected (`orders.checkout_id` UNIQUE); `payments` UNIQUE(provider, provider_payment_id).
-- Schema: all 28 spec tables and columns, all 11 enums (incl. `stock_conflict`, provider enum mock/stripe/payme/click), no float or numeric money, no EUR default currency, variant CHECKs and UNIQUEs, orders reference/checkout_id UNIQUE, checkouts UNIQUE(provider, provider_session_id).
+---
 
-## Defects
-| ID | Sev | Agent | Issue | Repro | Status |
+## Closed (this sprint — evidence on disk)
+
+| ID | Sev | Agent | Issue | Evidence | Status |
 |---|---|---|---|---|---|
-| QA-01 | P0 | Backend & Database | RLS is OFF on **all 29** public tables and 0 policies exist (spec §2, §12.6) | `rls.test.js` "every public table has RLS enabled" | Open (planned RLS migration) |
-| QA-02 | P0 | Backend & Database | With Supabase default grants, `anon` can read `orders` (PII), set `product_variants.stock_reserved=0`, read draft products, and insert fake `payment_events` (which pre-empts a real callback → payment never processed) | `rls.test.js` anon tests | Open (fixed by QA-01 + REVOKE) |
-| QA-03 | P0 | Backend & Database | `authenticated` can `INSERT INTO admin_users(id,role) VALUES (auth.uid(),'owner')`, so anyone can self-promote to admin | `rls.test.js` "cannot self-assign admin role" | Open |
-| QA-04 | P1 | Backend & Database | `inventory_movements` is not append-only: UPDATE/DELETE succeed for every role (spec §12.5) | `rls.test.js` append-only tests | Open |
-| QA-05 | P1 | Backend & Database | SECURITY DEFINER stock functions (`reserve_checkout`, `convert_checkout_to_order`, `release_checkout`, `release_expired_reservations`, `adjust_stock`) don't exist. The test also checks `search_path=''` and that only service_role has EXECUTE | `schema.test.js` §12.5 | Open (pending) |
-| QA-06 | P1 | Backend & Database → Payments & Orders | HAZARD: late convert after A's reservation expired and B re-reserved: blindly running `on_hand-=1, reserved-=1` **steals B's unit, and the CHECK does not catch it**. `convert_checkout_to_order` must lock and check `stock_reservations.status='active'` for that checkout, never the variant counters alone | `inventory-race.test.js` HAZARD test 2 | Open: needs function + test |
-| QA-07 | P1 | Payments & Orders (validation) / Backend (function) | HAZARD: the spec's reservation UPDATE accepts `qty=-1` and decrements `stock_reserved` (frees others' reservations). Need Zod `int().min(1)` + a guard in `reserve_checkout` | `inventory-race.test.js` HAZARD test 1 | Open |
-| QA-08 | P1 | Backend & Database | UZS in tiyin overflows int4 above **21,474,836 so'm**: `checkouts/orders.subtotal_cents,total_cents`, `payments.amount_cents` were `integer` | `schema.test.js` "UZS headroom" | Probably being fixed (`bigint` now imported in orders.ts); re-verify |
-| QA-09 | P2 | Backend & Database | `stock_reservations` has no UNIQUE(checkout_id, variant_id), so a retried checkout can double-reserve | `schema.test.js` | Open |
-| QA-10 | P2 | Backend & Database | `admin_users.id` has no FK to `auth.users` (the comment says a hand-written migration adds it; it doesn't exist) | `schema.test.js` | Open |
-| QA-11 | P2 | Backend & Database | `refunds.provider_refund_id` UNIQUE is global and `refunds` has no `provider`, so Payme and Click refund ids can collide | `webhook-idempotency.test.js` | Open |
-| QA-12 | P2 | Backend & Database | No public views with `security_invoker=on` exist (spec §12.6) | `schema.test.js` | Open (pending) |
-| QA-13 | P2 | Architect | Spec §3 line 72 still says `payments.provider 'stripe'` and §4/§5 still say Stripe PaymentIntent / `/webhooks/stripe`, which contradicts §12 (UZ, Payme/Click) | read docs | Open |
+| QA-P1-EXPIRED | P1 | Backend & Database | Muddati o'tgan rezerv `convert` da `paid` bo'lishi mumkin edi | Backend `bc54712` (0009: expired-reservation conflict + `shipping_method_name`); QA suite `d35fb38` — `tests/db` **135/135** on throwaway PG17 (`/workspace/review/integration/trial-2/SUMMARY.txt`, `test-db.txt`) | **Closed** |
+| QA-BEARER | P1 | QA & Security / Payments | Status/orders hali `guestToken` / `?token=` kontraktida | QA `4bebe92` — Bearer-only (`?token=` → 400), `accessToken` only; merged into trial-2 tip path via `d35fb38` | **Closed** |
+| QA-RUN-API-SEED | P2 | QA & Security | `tests/run-api.sh` seed: `demo.sql` TEMP `seed_ids` yo'qoladi (`psql -1` yo'q) | Trial-2 log: `/workspace/review/integration/trial-2/SUMMARY.txt` + `test-api.txt` (5 fail). Fix present in **uncommitted** working tree on `feat/qa` (`tests/run-api.sh` uses `psql -1`). Claimed room hash `12eff5e` is **not** in this git object store | **Fixed locally (WIP)** — commit pending |
+| QA-RUN-API-TOKEN | P2 | QA & Security | `flows.test.js` `?token=` 404 kutadi, API 400 qaytaradi | Same trial-2 log; WIP fix in `tests/api/flows.test.js` (expect 400 / `VALIDATION_ERROR`) | **Fixed locally (WIP)** |
+| QA-RUN-API-WH | P2 | QA & Security | `webhooks.test.js` Payme/Click 200 kutadi, `PAYMENT_PROVIDER=mock` → 404 | Same trial-2 log; WIP fix: deep Payme/Click `skipIf` unless provider set; mock asserts 404 | **Fixed locally (WIP)** |
 
-## Blocked (skipped placeholders in `tests/db/blocked.test.js`, exact assertions written)
-There is no app, API routes, checkout/payments/orders code, or callback handlers yet:
-- Checkout tampering (client price ignored, qty ≤0, unknown/inactive variant, duplicate lines, non-shippable country, PRICE_CHANGED with `details.variantIds`, reservation before redirect with 35-min expiry).
-- Payme: Basic auth (-32504), Check only verifies reservation active + amount (tiyin), amount mismatch (-31001), CreateTransaction idempotent, Perform after 35-min expiry returns error, Perform replay is idempotent, Cancel after Perform restores stock with `inventory_movements.reason='return'`.
-- Click: `sign_string` check, Prepare only verifies, Complete after expiry returns error, duplicate Complete.
-- API authz (401/403 role matrix, guest order token → 404, cron secret), success page never marks paid.
-- Responsive/e2e (Playwright, 4 viewports, axe, UZS format, countdown, 409 UX).
+Trial-2 green (Architect `/workspace/review/integration/trial-2/SUMMARY.txt`): typecheck, lint, `next build` 21/21, root `pnpm test` 204/204, payments Postgres 134/134, `tests/db` 135/135. Tip used: FE `6b95786`, DB `bc54712` (+ types `4d89f5f`), Pay `61392b8`, QA `da083dd`.
 
-## Files
-`tests/db/` (own package.json: vitest + pg), `tests/QA_REPORT.md`, `.github/workflows/ci.yml` (none existed; runs only tests/db).
+Unit `src/server/payments/token-leak.test.ts`: **6/6 passed** in trial-2 payments runs (`test-payments.txt`, `test-payments-postgres.txt`).
+
+---
+
+## E2E artifacts summary (no new run this turn)
+
+No Playwright stdout log for port **3140** (or any `SITE_URL`) was found under `/workspace` or `/tmp`. Config default remains `http://localhost:3000` (`tests/e2e/playwright.config.js`). Outcomes below are from **existing** artifacts only — failures were not invented.
+
+### demo-banner (`bag.spec.js` — "demo banner visible unless … live")
+- **No dedicated pass/fail log** for this spec title on disk.
+- **Incidental:** every `pages.spec` `error-context.md` page snapshot reviewed shows the demo note rendered (`Demo store — no real orders are accepted or charged.`).
+- **No** failure screenshot named for the demo-banner test under `artifacts/failures-086eb8d/` or `artifacts/results/`.
+
+### token-leak e2e (`bag.spec.js` — guest token / Referer hygiene)
+- Failure screenshot on disk: `tests/e2e/artifacts/failures-086eb8d/bag-bag-checkout-return-pa-8ceea-ty-requests-strict-referrer-mobile-375__test-failed-1.png` (name truncated by Playwright; matches checkout-return + strict-referrer checks in `bag.spec.js`).
+- Return-page screenshots exist for all four viewports (`artifacts/*-return.png`), so the mock checkout → return path was exercised at least once.
+- **No** full Playwright list-reporter log with pass/fail counts for bag specs was found — treat token e2e as **previously failed on mobile-375 (referrer/token hygiene)**, not re-verified this turn.
+- Separate **unit** token-leak suite: passed (see Closed).
+
+### pages.spec axe (recorded failures)
+- `artifacts/results/.last-run.json`: status `failed`, 72 failed test ids.
+- **72** `error-context.md` dirs under `artifacts/results/`; all axe serious/critical failures reduce to **one unique rule id**:
+
+| Axe rule id | Sample path | Sample target (from error-context) | Owner |
+|---|---|---|---|
+| `label-content-name-mismatch` | `/en` (also `/en/shop`, `/en/bag`, `/en/checkout`, `/en/pages/*`, … — 18 routes × viewports) | `a[aria-label="Bag, 0 items"]` | **Frontend & Design** |
+
+Note: Frontend commit `af1fd5c` ("a11y label-in-name for header bag link") is **not** an ancestor of trial-2 FE tip `6b95786`, so these recorded failures remain open against the merged frontend tip. Re-run e2e after that fix is on the integration tip.
+
+Other bag/pages failures beyond axe were not separately logged in `error-context.md` (axe assertion fires first).
+
+---
+
+## Open (evidence-backed only)
+
+| ID | Sev | Agent | Issue | Repro / evidence |
+|---|---|---|---|---|
+| QA-A11Y-BAG-NAME | P2 | Frontend & Design | Header bag control: accessible name vs visible text mismatch (`label-content-name-mismatch`) | `tests/e2e/artifacts/results/pages-§6-pages-en-home-mobile-375/error-context.md` (and 71 sibling page×viewport dirs). Rule: `label-content-name-mismatch`. Sample path: `/en`. |
+| QA-E2E-REFERRER | P2 | Frontend & Design (Referrer-Policy / token URL hygiene) | Prior e2e failure screenshot for checkout-return strict-referrer on mobile-375 | `tests/e2e/artifacts/failures-086eb8d/bag-…-strict-referrer-mobile-375__test-failed-1.png`. Needs re-run with list reporter to confirm current tip. |
+| QA-RUN-API-COMMIT | P2 | QA & Security | Trial-2 `run-api.sh` fixes still uncommitted on `feat/qa` | Working tree dirty: `tests/run-api.sh`, `tests/api/flows.test.js`, `tests/api/webhooks.test.js`, `tests/api/fixtures/catalog-hidden.sql`. Room hash `12eff5e` missing from git. |
+
+---
+
+## Cleanup (this turn)
+- Removed prunable git worktrees: `/tmp/qa-merge`, `/tmp/qa-merge2`, `/tmp/qa-p1v`, `/tmp/qa-pay`, `/tmp/qa-pay2`, `/tmp/qa-trial`.
+- No stray QA test servers (next/playwright/throwaway postgres) found listening.
+
+## Not done / out of scope this turn
+- No push. No staging Supabase. No new e2e or attack runs.
+- WIP run-api file changes left unstaged (only this report committed, per task scope).

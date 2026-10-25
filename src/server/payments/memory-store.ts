@@ -1,0 +1,285 @@
+/**
+ * In-memory CommerceRepo + InventoryService fake. TESTS AND LOCAL DEMO ONLY (refused in production by container.ts).
+ * Mirrors the semantics required of Backend's SQL functions (contracts/inventory.ts, SCHEMA_DELTA A8, QA-06/07):
+ *  - reserve: all-or-nothing, rejects qty < 1, only active variants, on_hand - reserved >= q
+ *  - convert: idempotent per checkout; checks THIS checkout's reservations are 'active' and unexpired (never just the
+ *    variant counters, QA-06); otherwise releases leftovers and records the order as stock_conflict
+ *  - adjust: append-only movement ledger
+ */
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { ApiError } from "@/lib/errors";
+import type { OrderStatus } from "@/contracts/orders";
+import type { CheckoutStatus } from "@/contracts/checkout";
+import type { AdjustStockInput, ConvertOrderInput, ConvertResult, InventoryService, ReleaseReason, ReserveLine, ReserveResult, TxLike } from "./types";
+import type { PaymentProviderName } from "./types";
+import type { OrderDetail, OrderListItem, OrderListQuery, PaymentRow, RefundRow, ShipmentRow } from "./store";
+import type { CheckoutRow, CommerceRepo, NewCheckout, OrderEventInput, OrderRow, ProviderTxn, ShippingMethodForCheckout, VariantForCheckout } from "./store";
+
+interface VariantState extends VariantForCheckout { stockOnHand: number; stockReserved: number }
+interface Reservation { id: string; variantId: string; checkoutId: string; quantity: number; expiresAt: Date; status: "active" | "converted" | "released" }
+
+export interface MemoryState {
+  variants: Map<string, VariantState>;
+  shipping: Map<string, ShippingMethodForCheckout & { countries: string[] }>;
+  checkouts: Map<string, CheckoutRow>;
+  reservations: Reservation[];
+  orders: Map<string, OrderRow>;
+  orderEvents: (OrderEventInput & { orderId: string; at: Date; id?: string })[];
+  movements: { variantId: string; delta: number; reason: string; orderId: string | null; note: string | null; actorId: string | null }[];
+  paymentEvents: Map<string, { type: string; processed: boolean; error: string | null }>;
+  payments: Map<string, PaymentRow & { orderId: string }>;
+  refunds: Map<string, RefundRow>;
+  shipments: ShipmentRow[];
+  providerTxns: Map<string, ProviderTxn>;
+  seq: number;
+}
+
+function emptyState(): MemoryState {
+  return { variants: new Map(), shipping: new Map(), checkouts: new Map(), reservations: [], orders: new Map(), orderEvents: [], movements: [], paymentEvents: new Map(), payments: new Map(), refunds: new Map(), shipments: [], providerTxns: new Map(), seq: 0 };
+}
+
+export class MemoryStore implements CommerceRepo, InventoryService {
+  s: MemoryState = emptyState();
+  constructor(private readonly clock: () => Date = () => new Date()) {}
+
+  // ---------- seeding helpers (tests / demo)
+  addVariant(v: Partial<VariantForCheckout> & { variantId: string; unitPriceMinor: number; currency: string; stockOnHand: number; vatRateBp: number }) {
+    this.s.variants.set(v.variantId, {
+      sku: `DEMO-${v.variantId.slice(0, 4)}`, productName: "Demo product", size: null, colour: null, isActive: true, isPublished: true, weightGrams: 500,
+      ikpuCode: null, packageCode: null, available: 0, stockReserved: 0, ...v,
+    } as VariantState);
+  }
+  addShippingMethod(m: Omit<ShippingMethodForCheckout, "countryShippable"> & { countries: string[] }) {
+    this.s.shipping.set(m.methodId, { ...m, countryShippable: true });
+  }
+  stock(variantId: string) {
+    const v = this.s.variants.get(variantId)!;
+    return { onHand: v.stockOnHand, reserved: v.stockReserved };
+  }
+
+  // ---------- CommerceRepo
+  private txChain: Promise<unknown> = Promise.resolve();
+  /** Serialized (one at a time, like row locks) so a rollback snapshot never clobbers a concurrent transaction. */
+  async runInTransaction<T>(fn: (tx: TxLike) => Promise<T>): Promise<T> {
+    const run = async () => {
+      const snapshot = structuredClone(this.s);
+      try {
+        return await fn({ memoryTx: true });
+      } catch (e) {
+        this.s = snapshot;
+        throw e;
+      }
+    };
+    const p = this.txChain.then(run, run);
+    this.txChain = p.catch(() => undefined);
+    return p;
+  }
+  async getVariantsForCheckout(ids: string[]) {
+    return ids.flatMap((id) => {
+      const v = this.s.variants.get(id);
+      return v ? [{ ...v, available: v.stockOnHand - v.stockReserved }] : [];
+    });
+  }
+  async getVariantStock(id: string) { const v = this.s.variants.get(id)!; return { stockOnHand: v.stockOnHand, stockReserved: v.stockReserved }; }
+  async getShippingMethod(methodId: string, country: string) {
+    const m = this.s.shipping.get(methodId);
+    if (!m) return null;
+    const { countries, ...rest } = m;
+    return { ...rest, countryShippable: countries.includes(country) };
+  }
+  async insertCheckout(c: NewCheckout) {
+    // Backend 0005 CHECKs: payload hash required with a key; token hash is 64 lower-case hex
+    if (c.idempotencyKey && !/^[0-9a-f]{64}$/.test(c.idempotencyPayloadHash ?? "")) throw new Error("check violation: idempotency_payload_hash");
+    if (!/^[0-9a-f]{64}$/.test(c.accessTokenHash)) throw new Error("check violation: access_token_hash");
+    if (c.idempotencyKey && [...this.s.checkouts.values()].some((x) => x.idempotencyKey === c.idempotencyKey)) throw new Error("unique violation: idempotency_key");
+    this.s.checkouts.set(c.id, { ...c, status: "open", providerSessionId: null, createdAt: this.clock() });
+  }
+  async getCheckout(id: string) { return this.s.checkouts.get(id) ?? null; }
+  async checkoutIdForIdempotencyKey(key: string, payloadHash: string) {
+    const c = [...this.s.checkouts.values()].find((x) => x.idempotencyKey === key);
+    if (!c) return null;
+    const a = Buffer.from(c.idempotencyPayloadHash ?? ""), b = Buffer.from(payloadHash);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) throw ApiError.idempotencyConflict();
+    return c.id;
+  }
+  async setProviderSession(id: string, sessionId: string) {
+    const c = this.s.checkouts.get(id)!;
+    c.providerSessionId = sessionId;
+    if (c.status === "open") c.status = "awaiting_payment";
+  }
+  async setCheckoutStatus(id: string, status: CheckoutStatus) { const c = this.s.checkouts.get(id); if (c) c.status = status; }
+  async listExpiredCheckouts(now: Date, limit: number) {
+    return [...this.s.checkouts.values()].filter((c) => (c.status === "open" || c.status === "awaiting_payment") && c.reservedUntil <= now).slice(0, limit);
+  }
+  async isReservationActive(checkoutId: string, now: Date) {
+    const rs = this.s.reservations.filter((r) => r.checkoutId === checkoutId);
+    return rs.length > 0 && rs.every((r) => r.status === "active" && r.expiresAt > now);
+  }
+  async getOrder(id: string) { return this.s.orders.get(id) ?? null; }
+  async getOrderByCheckout(checkoutId: string) { return [...this.s.orders.values()].find((o) => o.checkoutId === checkoutId) ?? null; }
+  async updateOrderStatus(orderId: string, ev: OrderEventInput, now: Date) {
+    const o = this.s.orders.get(orderId);
+    if (!o || o.status !== ev.fromStatus) return false;
+    o.status = ev.toStatus;
+    if (ev.toStatus === "paid") o.paidAt = now;
+    this.s.orderEvents.push({ ...ev, orderId, at: now });
+    return true;
+  }
+  async recordPaymentEvent(provider: PaymentProviderName, eventId: string, type: string) {
+    const k = `${provider}:${eventId}`;
+    const e = this.s.paymentEvents.get(k);
+    if (e) return { inserted: false, processed: e.processed };
+    this.s.paymentEvents.set(k, { type, processed: false, error: null });
+    return { inserted: true, processed: false };
+  }
+  async markPaymentEventProcessed(provider: PaymentProviderName, eventId: string, error: string | null) {
+    const e = this.s.paymentEvents.get(`${provider}:${eventId}`);
+    if (e) { e.processed = true; e.error = error; }
+  }
+  async upsertPayment(p: Parameters<CommerceRepo["upsertPayment"]>[0]) {
+    const k = `${p.provider}:${p.providerPaymentId}`;
+    const prev = this.s.payments.get(k);
+    this.s.payments.set(k, { id: prev?.id ?? randomUUID(), createdAt: prev?.createdAt ?? this.clock(), orderId: p.orderId, provider: p.provider, providerPaymentId: p.providerPaymentId, amountMinor: p.amountMinor, currency: p.currency, status: p.status });
+  }
+  async recordRefund(r: Parameters<CommerceRepo["recordRefund"]>[0]) {
+    const prev = this.s.refunds.get(r.idempotencyKey);
+    if (prev && prev.status === "succeeded") return prev;
+    const pay = this.s.payments.get(`${r.provider}:${r.providerPaymentId}`);
+    const row: RefundRow = { id: prev?.id ?? randomUUID(), paymentId: pay?.id ?? randomUUID(), orderId: r.orderId, amountMinor: r.amountMinor, reason: r.reason, providerRefundId: r.providerRefundId, status: r.status, idempotencyKey: r.idempotencyKey, createdAt: prev?.createdAt ?? this.clock() };
+    this.s.refunds.set(r.idempotencyKey, row);
+    return row;
+  }
+  async getRefundByIdempotencyKey(key: string) { return this.s.refunds.get(key) ?? null; }
+  async getOrderIdByReference(reference: string) { return [...this.s.orders.values()].find((o) => o.reference === reference)?.id ?? null; }
+  async getOrderDetail(orderId: string): Promise<OrderDetail | null> {
+    const o = this.s.orders.get(orderId);
+    if (!o) return null;
+    const c = this.s.checkouts.get(o.checkoutId)!;
+    const events = this.s.orderEvents.filter((e) => e.orderId === orderId);
+    return {
+      ...o, email: c.email, phone: c.phone, locale: c.locale, accessTokenHash: c.accessTokenHash, shippingAddress: c.shippingAddress, billingAddress: c.billingAddress,
+      shippingMethodId: c.shippingMethodId, subtotalMinor: c.subtotalMinor, shippingMinor: c.shippingMinor, taxMinor: c.taxMinor, discountMinor: c.discountMinor,
+      placedAt: events[0]?.at ?? c.createdAt, updatedAt: events.at(-1)?.at ?? c.createdAt,
+      payments: [...this.s.payments.values()].filter((p) => p.orderId === orderId),
+      refunds: [...this.s.refunds.values()].filter((r) => r.orderId === orderId),
+      shipments: this.s.shipments.filter((x) => x.orderId === orderId),
+      events: events.map((e) => ({ id: (e.id ??= randomUUID()), type: e.type, fromStatus: e.fromStatus, toStatus: e.toStatus, payload: e.payload, actorId: e.actorId, createdAt: e.at })),
+    };
+  }
+  async listOrders(q: OrderListQuery) {
+    const needle = q.q?.toLowerCase();
+    const all: OrderListItem[] = [];
+    for (const o of [...this.s.orders.values()].reverse()) {
+      const c = this.s.checkouts.get(o.checkoutId)!;
+      if (q.status && o.status !== q.status) continue;
+      if (needle && !o.reference.toLowerCase().includes(needle) && !c.email.toLowerCase().includes(needle)) continue;
+      const placedAt = this.s.orderEvents.find((e) => e.orderId === o.id)?.at ?? c.createdAt;
+      all.push({ id: o.id, reference: o.reference, email: c.email, status: o.status, currency: o.currency, totalMinor: o.totalMinor, itemCount: o.items.reduce((n, l) => n + l.quantity, 0), placedAt, paidAt: o.paidAt });
+    }
+    const off = q.cursor ? Number(q.cursor) || 0 : 0;
+    const items = all.slice(off, off + q.limit);
+    return { items, nextCursor: off + q.limit < all.length ? String(off + q.limit) : null };
+  }
+  async insertShipment(x: Omit<ShipmentRow, "id">) {
+    const row = { ...x, id: randomUUID() };
+    this.s.shipments.push(row);
+    return row;
+  }
+  async insertProviderTxn(t: Omit<ProviderTxn, "seq">) {
+    const k = `${t.provider}:${t.providerTxnId}`;
+    const existing = this.s.providerTxns.get(k);
+    if (existing) return { created: false, txn: existing };
+    const txn = { ...t, seq: ++this.s.seq };
+    this.s.providerTxns.set(k, txn);
+    return { created: true, txn };
+  }
+  async getProviderTxn(provider: PaymentProviderName, id: string) { return this.s.providerTxns.get(`${provider}:${id}`) ?? null; }
+  async getProviderTxnBySeq(provider: PaymentProviderName, seq: number) {
+    return [...this.s.providerTxns.values()].find((t) => t.provider === provider && t.seq === seq) ?? null;
+  }
+  async findOpenProviderTxns(provider: PaymentProviderName, checkoutId: string) {
+    return [...this.s.providerTxns.values()].filter((t) => t.provider === provider && t.checkoutId === checkoutId && (t.state === 1 || t.state === 2));
+  }
+  async updateProviderTxn(provider: PaymentProviderName, id: string, expected: ProviderTxn["state"], patch: Partial<ProviderTxn>) {
+    const t = this.s.providerTxns.get(`${provider}:${id}`);
+    if (!t || t.state !== expected) return null;
+    Object.assign(t, patch);
+    return t;
+  }
+  async listProviderTxns(provider: PaymentProviderName, from: number, to: number) {
+    return [...this.s.providerTxns.values()].filter((t) => t.provider === provider && t.providerTime >= from && t.providerTime <= to).sort((a, b) => a.providerTime - b.providerTime);
+  }
+
+  // ---------- InventoryService fake (semantics of the SQL functions)
+  async reserve(checkoutId: string, lines: ReserveLine[], expiresAt: Date): Promise<ReserveResult> {
+    const bad: string[] = [];
+    for (const l of lines) {
+      const v = this.s.variants.get(l.variantId);
+      if (!Number.isInteger(l.quantity) || l.quantity < 1 || !v || !v.isActive || v.stockOnHand - v.stockReserved < l.quantity) bad.push(l.variantId);
+    }
+    if (bad.length) return { ok: false, code: "OUT_OF_STOCK", variantIds: bad };
+    for (const l of lines) {
+      this.s.variants.get(l.variantId)!.stockReserved += l.quantity;
+      this.s.reservations.push({ id: randomUUID(), variantId: l.variantId, checkoutId, quantity: l.quantity, expiresAt, status: "active" });
+    }
+    return { ok: true };
+  }
+  private releaseRows(rows: Reservation[]) {
+    for (const r of rows) { this.s.variants.get(r.variantId)!.stockReserved -= r.quantity; r.status = "released"; }
+    return rows.length;
+  }
+  async release(checkoutId: string, reason: ReleaseReason) {
+    void reason; // the fake does not persist the reason
+    return this.releaseRows(this.s.reservations.filter((r) => r.checkoutId === checkoutId && r.status === "active"));
+  }
+  async releaseExpired(now: Date = this.clock()) {
+    return this.releaseRows(this.s.reservations.filter((r) => r.status === "active" && r.expiresAt <= now));
+  }
+  async convert(checkoutId: string, input: ConvertOrderInput, opts: { conflictMode?: "record" | "abort" } = {}): Promise<ConvertResult> {
+    // fully synchronous body = atomic, like the row-locked SQL function (no interleaving between check and write)
+    const existing = [...this.s.orders.values()].find((o) => o.checkoutId === checkoutId);
+    if (existing) return { status: "already_converted", orderId: existing.id, reference: existing.reference };
+    const c = this.s.checkouts.get(checkoutId);
+    if (!c) throw new Error("checkout not found");
+    const rs = this.s.reservations.filter((r) => r.checkoutId === checkoutId);
+    const conflict = rs.filter((r) => r.status !== "active" || r.expiresAt <= input.paidAt);
+    // abort mode (contracts/inventory.ts): nothing is written, reservations untouched; caller refuses the provider txn
+    if ((conflict.length || rs.length === 0) && opts.conflictMode === "abort") return { status: "aborted", conflictVariantIds: conflict.map((r) => r.variantId) };
+    const orderId = randomUUID();
+    const base: OrderRow = { id: orderId, reference: input.reference, checkoutId, status: "pending_payment", totalMinor: c.totalMinor, currency: c.currency, items: c.items, paidAt: null };
+    let to: OrderStatus;
+    if (conflict.length || rs.length === 0) {
+      this.releaseRows(rs.filter((r) => r.status === "active"));
+      to = "stock_conflict";
+    } else {
+      for (const r of rs) {
+        const v = this.s.variants.get(r.variantId)!;
+        v.stockOnHand -= r.quantity; v.stockReserved -= r.quantity; r.status = "converted";
+        this.s.movements.push({ variantId: r.variantId, delta: -r.quantity, reason: "sale", orderId, note: null, actorId: null });
+      }
+      to = "paid";
+    }
+    this.s.orders.set(orderId, { ...base, status: to, paidAt: to === "paid" ? input.paidAt : null });
+    this.s.orderEvents.push({ orderId, type: to === "paid" ? "payment_received" : "stock_conflict", fromStatus: "pending_payment", toStatus: to, payload: { provider: input.provider, providerPaymentId: input.providerPaymentId }, actorId: null, at: input.paidAt });
+    c.status = "completed";
+    return to === "paid" ? { status: "paid", orderId, reference: input.reference } : { status: "stock_conflict", orderId, reference: input.reference, conflictVariantIds: conflict.map((r) => r.variantId) };
+  }
+  /** restock_order(): puts back what the order's 'sale' movements took; idempotent per order (second call -> 0). */
+  async restockOrder(orderId: string, reason: "return" | "cancellation" = "return", actorId: string | null = null, note?: string) {
+    if (this.s.movements.some((m) => m.orderId === orderId && (m.reason === "return" || m.reason === "cancellation"))) return 0;
+    const sold = this.s.movements.filter((m) => m.orderId === orderId && m.reason === "sale");
+    for (const m of sold) {
+      this.s.variants.get(m.variantId)!.stockOnHand += -m.delta;
+      this.s.movements.push({ variantId: m.variantId, delta: -m.delta, reason, orderId, note: note ?? null, actorId });
+    }
+    return sold.length;
+  }
+  async adjust(input: AdjustStockInput, actorId: string | null) {
+    const v = this.s.variants.get(input.variantId);
+    if (!v) throw new Error("variant not found");
+    if (!Number.isInteger(input.delta) || input.delta === 0 || v.stockOnHand + input.delta < v.stockReserved) throw new Error("invalid delta");
+    v.stockOnHand += input.delta;
+    this.s.movements.push({ variantId: input.variantId, delta: input.delta, reason: input.reason, orderId: null, note: input.note ?? null, actorId });
+    return { stockOnHand: v.stockOnHand };
+  }
+}

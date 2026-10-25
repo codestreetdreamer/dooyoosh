@@ -4,16 +4,15 @@
  * Rules:
  *  - PAYMENT_MODE defaults to "sandbox". Only the exact string "live" enables live mode.
  *    Any other value (typo, "LIVE ", "production") is refused rather than silently treated as live or sandbox.
- *  - "mock" provider is refused in live mode and when NODE_ENV=production (spec §12.1; also enforced in src/lib/env.ts).
+ *  - "mock" provider is refused in live mode; under NODE_ENV=production it needs PAYMENT_MODE=sandbox +
+ *    ALLOW_MOCK_IN_PRODUCTION=true (deployed Vercel sandbox, same as src/lib/env.ts). See sandbox-gate.ts.
  *  - Secrets come only from env. Nothing is hardcoded. Missing credentials for the chosen provider -> throw.
  *  - Sandbox Payme uses the TEST_KEY from the cashbox and the test.paycom.uz checkout host.
  *  - Click has no separate sandbox host (docs.click.uz/testing/postman): in sandbox mode the customer is sent to our
  *    mock pay page, and Prepare/Complete are exercised with Click's Postman collection / playground.
  */
-import type { PaymentProviderName } from "./types";
-
-/** sandbox = test credentials / test hosts only, no real money. live = real money. */
-export type PaymentMode = "sandbox" | "live";
+import { mockProviderAllowed } from "./sandbox-gate";
+import type { PaymentMode, PaymentProviderName } from "./types";
 
 const PROVIDERS: readonly PaymentProviderName[] = ["mock", "stripe", "payme", "click"];
 
@@ -60,11 +59,15 @@ export function loadPaymentConfig(env: Env = process.env): PaymentConfig {
   const mode = resolveMode(env.PAYMENT_MODE);
   const nodeEnv = env.NODE_ENV ?? "development";
   const provider = (env.PAYMENT_PROVIDER ?? "mock") as PaymentProviderName;
+  // QA: fail fast on a contradictory deploy, whatever the provider (a live deploy must never carry the demo flag).
+  if (mode === "live" && env.ALLOW_MOCK_IN_PRODUCTION === "true") {
+    throw new PaymentConfigError("PAYMENT_MODE=live together with ALLOW_MOCK_IN_PRODUCTION=true is refused; remove the demo flag");
+  }
   if (!PROVIDERS.includes(provider)) throw new PaymentConfigError(`unknown PAYMENT_PROVIDER ${provider}`);
   const siteUrl = env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 
-  if (provider === "mock" && (mode === "live" || nodeEnv === "production")) {
-    throw new PaymentConfigError("mock payment provider is not allowed in live mode or NODE_ENV=production");
+  if (provider === "mock" && !mockProviderAllowed(env)) {
+    throw new PaymentConfigError("mock payment provider is not allowed in live mode, or in NODE_ENV=production without PAYMENT_MODE=sandbox + ALLOW_MOCK_IN_PRODUCTION=true");
   }
   if (provider === "stripe") {
     throw new PaymentConfigError("stripe is not available: business is registered in Uzbekistan (spec v0.4)");

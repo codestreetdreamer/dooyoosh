@@ -1,15 +1,23 @@
 import { sql } from "drizzle-orm";
-import { bigint, char, check, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
-import { createdAt, id, updatedAt } from "./_common";
+import { bigint, char, check, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean } from "drizzle-orm/pg-core";
+import { createdAt, currencyCheck, id, localeCheck, updatedAt } from "./_common";
 import { productVariants } from "./catalog";
 import { shippingMethods } from "./markets";
+
+/** B15: fixed list of order_events.type values. */
+export const ORDER_EVENT_TYPES = [
+  "status_changed", "payment_received", "payment_failed", "stock_conflict", "refund_requested",
+  "refund_succeeded", "shipment_created", "email_sent", "note", "stock_restocked",
+] as const;
+const ORDER_EVENT_TYPES_SQL = sql.raw(`(${ORDER_EVENT_TYPES.map((t) => `'${t}'`).join(",")})`);
 
 export const checkoutStatus = pgEnum("checkout_status", ["open", "awaiting_payment", "completed", "expired", "failed"]);
 export const orderStatus = pgEnum("order_status", [
   "pending_payment", "paid", "stock_conflict", "fulfilling", "shipped", "delivered", "cancelled", "refunded", "partially_refunded",
 ]);
 export const paymentProvider = pgEnum("payment_provider", ["mock", "stripe", "payme", "click"]);
-export const paymentStatus = pgEnum("payment_status", ["requires_payment", "succeeded", "failed", "refunded", "partially_refunded"]);
+export const paymentStatus = pgEnum("payment_status", ["requires_payment", "succeeded", "failed", "canceled", "refunded", "partially_refunded"]);
 export const refundStatus = pgEnum("refund_status", ["pending", "succeeded", "failed", "canceled"]);
 export const shipmentStatus = pgEnum("shipment_status", ["label_created", "in_transit", "delivered", "exception"]);
 
@@ -24,8 +32,12 @@ export const checkouts = pgTable("checkouts", {
   shippingAddress: jsonb("shipping_address").notNull(),
   billingAddress: jsonb("billing_address"),
   shippingMethodId: uuid("shipping_method_id").notNull().references(() => shippingMethods.id),
+  /** 0009: display-name snapshot at checkout time (Payments writes it; nullable for pre-0009 rows); copied to the order by convert */
+  shippingMethodName: text("shipping_method_name"),
   // client-supplied UUID: retries of the same submit return the same checkout
   idempotencyKey: uuid("idempotency_key").unique(),
+  // 0005: hex sha256 of the canonical createCheckout payload (computed by Payments); same key + different hash => IDEMPOTENCY_CONFLICT (409)
+  idempotencyPayloadHash: text("idempotency_payload_hash"),
   subtotalCents: bigint("subtotal_cents", { mode: "number" }).notNull(),
   shippingCents: bigint("shipping_cents", { mode: "number" }).notNull(),
   taxCents: bigint("tax_cents", { mode: "number" }).notNull().default(0),
@@ -33,15 +45,26 @@ export const checkouts = pgTable("checkouts", {
   totalCents: bigint("total_cents", { mode: "number" }).notNull(),
   provider: paymentProvider("provider").notNull(),
   providerSessionId: text("provider_session_id"),
+  // B1: lower-case hex HMAC_SHA256(ORDER_TOKEN_SECRET, guest token), computed by Payments; copied to orders on convert
+  accessTokenHash: text("access_token_hash").notNull(),
+  // stock reservation expiry (35 min), set by reserve_checkout(); expires_at = provider session (30 min)
+  reservedUntil: timestamp("reserved_until", { withTimezone: true }),
   status: checkoutStatus("status").notNull().default("open"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: createdAt(),
+  updatedAt: updatedAt(),
 }, (t) => [
   check("checkouts_totals_nonneg", sql`${t.subtotalCents} >= 0 AND ${t.shippingCents} >= 0 AND ${t.taxCents} >= 0 AND ${t.discountCents} >= 0 AND ${t.totalCents} >= 0`),
+  check("checkouts_idempotency_payload_hash_fmt", sql`${t.idempotencyPayloadHash} IS NULL OR ${t.idempotencyPayloadHash} ~ '^[0-9a-f]{64}$'`),
+  check("checkouts_idempotency_key_has_hash", sql`${t.idempotencyKey} IS NULL OR ${t.idempotencyPayloadHash} IS NOT NULL`),
+  check("checkouts_access_token_hash_fmt", sql`${t.accessTokenHash} ~ '^[0-9a-f]{64}$'`),
   check("checkouts_total_sum", sql`${t.totalCents} = ${t.subtotalCents} + ${t.shippingCents} + ${t.taxCents} - ${t.discountCents}`),
   unique("checkouts_provider_session_uq").on(t.provider, t.providerSessionId),
+  check("checkouts_currency_fmt", currencyCheck(t.currency)),
+  check("checkouts_locale_chk", localeCheck(t.locale)),
   index("checkouts_status_expires_idx").on(t.status, t.expiresAt),
   index("checkouts_shipping_method_idx").on(t.shippingMethodId),
+  check("checkouts_shipping_method_name_len", sql`${t.shippingMethodName} IS NULL OR char_length(${t.shippingMethodName}) BETWEEN 1 AND 200`),
 ]);
 
 export const orders = pgTable("orders", {
@@ -61,18 +84,24 @@ export const orders = pgTable("orders", {
   shippingAddress: jsonb("shipping_address").notNull(),
   billingAddress: jsonb("billing_address"),
   shippingMethodId: uuid("shipping_method_id").notNull().references(() => shippingMethods.id),
+  /** 0009: display-name snapshot at checkout time (Payments writes it; nullable for pre-0009 rows); copied to the order by convert */
+  shippingMethodName: text("shipping_method_name"),
   accessTokenHash: text("access_token_hash").notNull(),
   placedAt: timestamp("placed_at", { withTimezone: true }).notNull().defaultNow(),
   paidAt: timestamp("paid_at", { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [
+  check("orders_currency_fmt", currencyCheck(t.currency)),
+  check("orders_locale_chk", localeCheck(t.locale)),
   check("orders_reference_fmt", sql`${t.reference} ~ '^DY-[0-9]{8}-[A-Z2-7]{5}$'`),
+  check("orders_access_token_hash_fmt", sql`${t.accessTokenHash} ~ '^[0-9a-f]{64}$'`),
   check("orders_total_sum", sql`${t.totalCents} = ${t.subtotalCents} + ${t.shippingCents} + ${t.taxCents} - ${t.discountCents}`),
   check("orders_totals_nonneg", sql`${t.subtotalCents} >= 0 AND ${t.shippingCents} >= 0 AND ${t.taxCents} >= 0 AND ${t.discountCents} >= 0 AND ${t.totalCents} >= 0`),
   index("orders_status_idx").on(t.status, t.createdAt),
   index("orders_email_idx").on(t.email),
   index("orders_shipping_method_idx").on(t.shippingMethodId),
+  check("orders_shipping_method_name_len", sql`${t.shippingMethodName} IS NULL OR char_length(${t.shippingMethodName}) BETWEEN 1 AND 200`),
 ]);
 
 export const orderItems = pgTable("order_items", {
@@ -87,11 +116,13 @@ export const orderItems = pgTable("order_items", {
   ikpuCode: text("ikpu_code"),
   packageCode: text("package_code"),
   vatRateBp: integer("vat_rate_bp").notNull(),
+  ikpuIsDemo: boolean("ikpu_is_demo").generatedAlwaysAs(sql`coalesce(ikpu_code LIKE 'DEMO-%', false)`),
   unitPriceCents: bigint("unit_price_cents", { mode: "number" }).notNull(),
   quantity: integer("quantity").notNull(),
   lineTotalCents: bigint("line_total_cents", { mode: "number" }).notNull(),
 }, (t) => [
   check("order_items_qty_pos", sql`${t.quantity} > 0`),
+  check("order_items_unit_price_nonneg", sql`${t.unitPriceCents} >= 0`),
   check("order_items_line_total", sql`${t.lineTotalCents} = ${t.unitPriceCents} * ${t.quantity}`),
   index("order_items_order_idx").on(t.orderId),
   index("order_items_variant_idx").on(t.variantId),
@@ -106,7 +137,10 @@ export const orderEvents = pgTable("order_events", {
   payload: jsonb("payload"),
   actorId: uuid("actor_id"),
   createdAt: createdAt(),
-}, (t) => [index("order_events_order_idx").on(t.orderId, t.createdAt)]);
+}, (t) => [
+  index("order_events_order_idx").on(t.orderId, t.createdAt),
+  check("order_events_type_chk", sql`${t.type} IN ${ORDER_EVENT_TYPES_SQL}`),
+]);
 
 export const payments = pgTable("payments", {
   id: id(),
@@ -121,6 +155,9 @@ export const payments = pgTable("payments", {
 }, (t) => [
   check("payments_amount_nonneg", sql`${t.amountCents} >= 0`),
   unique("payments_provider_payment_uq").on(t.provider, t.providerPaymentId),
+  check("payments_currency_fmt", currencyCheck(t.currency)),
+  // B16: at most one succeeded payment per order
+  uniqueIndex("payments_one_succeeded_per_order_uq").on(t.orderId).where(sql`${t.status} = 'succeeded'`),
   index("payments_order_idx").on(t.orderId),
 ]);
 
@@ -132,9 +169,13 @@ export const refunds = pgTable("refunds", {
   reason: text("reason"),
   providerRefundId: text("provider_refund_id"),
   status: refundStatus("status").notNull().default("pending"),
+  // B9: admin refund request idempotency
+  idempotencyKey: text("idempotency_key").notNull().unique(),
   createdAt: createdAt(),
+  updatedAt: updatedAt(),
 }, (t) => [
   check("refunds_amount_pos", sql`${t.amountCents} > 0`),
+  check("refunds_idempotency_key_len", sql`length(${t.idempotencyKey}) BETWEEN 1 AND 200`),
   // QA-11: provider refund ids are unique per provider, not globally
   unique("refunds_provider_refund_uq").on(t.provider, t.providerRefundId),
   index("refunds_payment_idx").on(t.paymentId),
@@ -149,7 +190,12 @@ export const shipments = pgTable("shipments", {
   status: shipmentStatus("status").notNull().default("label_created"),
   shippedAt: timestamp("shipped_at", { withTimezone: true }),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
-}, (t) => [index("shipments_order_idx").on(t.orderId)]);
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index("shipments_order_idx").on(t.orderId),
+  check("shipments_tracking_url_https", sql`${t.trackingUrl} IS NULL OR ${t.trackingUrl} ~ '^https://'`),
+]);
 
 // Idempotency for provider webhooks/callbacks (Stripe, Payme JSON-RPC, Click Prepare/Complete).
 // Insert ... on conflict do nothing => already handled. See record_payment_event().
@@ -162,3 +208,36 @@ export const paymentEvents = pgTable("payment_events", {
   processedAt: timestamp("processed_at", { withTimezone: true }),
   error: text("error"),
 }, (t) => [primaryKey({ columns: [t.provider, t.eventId] })]);
+
+// B18 (Payments): Payme/Click transactions exist before our order (CreateTransaction -> PerformTransaction).
+// Mirrors ProviderTransaction in src/contracts/payments.ts. RLS on, server (service_role) only.
+export const providerTxnState = pgEnum("provider_txn_state", ["created", "performed", "canceled", "canceled_after_perform"]);
+export const providerTransactions = pgTable("provider_transactions", {
+  id: id(),
+  provider: paymentProvider("provider").notNull(),
+  providerTxnId: text("provider_txn_id").notNull(),
+  checkoutId: uuid("checkout_id").notNull().references(() => checkouts.id, { onDelete: "restrict" }),
+  orderId: uuid("order_id").references(() => orders.id, { onDelete: "restrict" }),
+  state: providerTxnState("state").notNull().default("created"),
+  amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+  currency: char("currency", { length: 3 }).notNull(),
+  cancelReason: integer("cancel_reason"),
+  // 0005: monotonic sequence (global identity => monotonic per provider too); Payme GetStatement ordering
+  seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity(),
+  // 0005: provider's own timestamp in ms (Payme `time`), nullable
+  providerTime: bigint("provider_time", { mode: "number" }),
+  raw: jsonb("raw"),
+  createdAt: createdAt(),
+  performedAt: timestamp("performed_at", { withTimezone: true }),
+  canceledAt: timestamp("canceled_at", { withTimezone: true }),
+  updatedAt: updatedAt(),
+}, (t) => [
+  unique("provider_transactions_provider_txn_uq").on(t.provider, t.providerTxnId),
+  check("provider_transactions_amount_nonneg", sql`${t.amountCents} >= 0`),
+  check("provider_transactions_currency_fmt", currencyCheck(t.currency)),
+  index("provider_transactions_checkout_idx").on(t.checkoutId),
+  index("provider_transactions_order_idx").on(t.orderId),
+  unique("provider_transactions_provider_seq_uq").on(t.provider, t.seq),
+  index("provider_transactions_provider_time_idx").on(t.provider, t.providerTime),
+  check("provider_transactions_provider_time_pos", sql`${t.providerTime} IS NULL OR ${t.providerTime} > 0`),
+]);
