@@ -75,12 +75,14 @@ d("PgStore (local Postgres, Backend migrations)", () => {
     const c = await createCheckout(dp, provider, req([{ variantId: v!, quantity: 2 }], { idempotencyKey: key }));
     expect(c.totals.subtotalMinor).toBe(20000000);
     expect(await stock(v!)).toEqual({ onHand: 3, reserved: 2 });
-    const [row] = await sql`select row_to_json(c)::text as j, access_token_hash, idempotency_payload_hash, status, reserved_until from checkouts c where id = ${c.checkoutId}`;
+    const [row] = await sql`select row_to_json(c)::text as j, access_token_hash, idempotency_payload_hash, status, reserved_until, shipping_method_name from checkouts c where id = ${c.checkoutId}`;
     expect(row!.access_token_hash).toBe(hashAccessToken(TOKEN_SECRET, c.accessToken));
     expect(String(row!.j)).not.toContain(c.accessToken);
     expect(row!.idempotency_payload_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(row!.status).toBe("awaiting_payment");
     expect(row!.reserved_until).not.toBeNull();
+    expect(row!.shipping_method_name).toBeTruthy();
+    expect(String(row!.shipping_method_name).length).toBeGreaterThanOrEqual(1);
     expect((await getCheckoutStatus(dp, c.checkoutId, c.accessToken)).checkoutStatus).toBe("awaiting_payment");
   });
 
@@ -198,6 +200,21 @@ d("PgStore (local Postgres, Backend migrations)", () => {
     const [pt] = await sql`select state from provider_transactions where provider_txn_id = ${id}`;
     expect(pt!.state).toBe("canceled");
     expect(await stock(v!)).toEqual({ onHand: 2, reserved: 0 });
+  });
+
+  it("0009: convert treats expires_at <= paid_at as conflict even if status is still active (record + abort)", async () => {
+    const [v] = await product([2]);
+    const { deps: dp, provider } = deps();
+    const c = await createCheckout(dp, provider, req([{ variantId: v!, quantity: 1 }]));
+    // push expires_at into the past without releasing (sweeper has not run)
+    await sql`update stock_reservations set expires_at = now() - interval '1 minute' where checkout_id = ${c.checkoutId}`;
+    const aborted = await store.convert(c.checkoutId, { reference: "DY-20990101-AAAA2", provider: "mock", providerPaymentId: `abort_${c.checkoutId}`, amountMinor: c.totals.totalMinor, currency: "UZS", paidAt: new Date() }, { conflictMode: "abort" });
+    expect(aborted.status).toBe("aborted");
+    expect((await sql`select count(*)::int as n from orders where checkout_id = ${c.checkoutId}`)[0]!.n).toBe(0);
+    // restore active so record path can write stock_conflict (reservation still active but expired)
+    const recorded = await store.convert(c.checkoutId, { reference: "DY-20990101-BBBB2", provider: "mock", providerPaymentId: `rec_${c.checkoutId}`, amountMinor: c.totals.totalMinor, currency: "UZS", paidAt: new Date() }, { conflictMode: "record" });
+    expect(recorded.status).toBe("stock_conflict");
+    expect((await store.getOrderByCheckout(c.checkoutId))!.status).toBe("stock_conflict");
   });
 
   it("adjust_stock with null actor + admin actor; never below reserved", async () => {

@@ -56,7 +56,7 @@ function toCheckout(r: Row): CheckoutRow {
     id: String(r.id), idempotencyKey: (r.idempotency_key as string) ?? null, idempotencyPayloadHash: (r.idempotency_payload_hash as string) ?? null,
     accessTokenHash: String(r.access_token_hash), email: String(r.email), phone: (r.phone as string) ?? null, locale: String(r.locale), currency: String(r.currency),
     items: r.items as CheckoutLine[], shippingAddress: r.shipping_address as CheckoutRow["shippingAddress"], billingAddress: (r.billing_address as CheckoutRow["billingAddress"]) ?? null,
-    shippingMethodId: String(r.shipping_method_id), shippingName: String(r.shipping_name ?? ""),
+    shippingMethodId: String(r.shipping_method_id), shippingName: String(r.shipping_method_name ?? r.shipping_name ?? ""),
     subtotalMinor: num(r.subtotal_cents), shippingMinor: num(r.shipping_cents), taxMinor: num(r.tax_cents), discountMinor: num(r.discount_cents), totalMinor: num(r.total_cents),
     provider: r.provider as PaymentProviderName, expiresAt: r.expires_at as Date, reservedUntil: (r.reserved_until as Date) ?? (r.expires_at as Date),
     status: r.status as CheckoutStatus, providerSessionId: (r.provider_session_id as string) ?? null, createdAt: r.created_at as Date,
@@ -85,7 +85,8 @@ const toShipment = (r: Row): ShipmentRow => ({
   status: r.status as ShipmentRow["status"], shippedAt: (r.shipped_at as Date) ?? null, deliveredAt: (r.delivered_at as Date) ?? null,
 });
 
-const CHECKOUT_COLS = (s: Sql) => s`c.*, (extract(epoch from c.created_at)) as _e, sm.name as shipping_name`;
+/** Prefer checkouts.shipping_method_name (0009 snapshot); fall back to shipping_methods.name for pre-0009 rows. */
+const CHECKOUT_COLS = (s: Sql) => s`c.*, (extract(epoch from c.created_at)) as _e, coalesce(c.shipping_method_name, sm.name) as shipping_name`;
 
 export class PgStore implements CommerceRepo, InventoryService {
   constructor(private readonly sql: postgres.Sql) {}
@@ -134,14 +135,12 @@ export class PgStore implements CommerceRepo, InventoryService {
 
   // ---------- checkouts
   async insertCheckout(c: NewCheckout, tx?: TxLike): Promise<void> {
-    // TODO(Backend 0009): write c.shippingName into checkouts.shipping_method_name (snapshot, copied to orders) and read it
-    // back in getCheckout instead of joining shipping_methods.name. Until then the name is joined live.
-    // reserved_until is set by reserve_checkout.
+    // reserved_until is set by reserve_checkout; shipping_method_name is the 0009 snapshot (convert copies it to orders)
     await this.q(tx)`
-      insert into checkouts (id, email, phone, locale, currency, items, shipping_address, billing_address, shipping_method_id, idempotency_key,
+      insert into checkouts (id, email, phone, locale, currency, items, shipping_address, billing_address, shipping_method_id, shipping_method_name, idempotency_key,
         idempotency_payload_hash, subtotal_cents, shipping_cents, tax_cents, discount_cents, total_cents, provider, access_token_hash, status, expires_at)
       values (${c.id}, ${c.email}, ${c.phone}, ${c.locale}, ${c.currency}, ${this.sql.json(c.items as never)}, ${this.sql.json(c.shippingAddress as never)},
-        ${c.billingAddress ? this.sql.json(c.billingAddress as never) : null}, ${c.shippingMethodId}, ${c.idempotencyKey}, ${c.idempotencyPayloadHash},
+        ${c.billingAddress ? this.sql.json(c.billingAddress as never) : null}, ${c.shippingMethodId}, ${c.shippingName || null}, ${c.idempotencyKey}, ${c.idempotencyPayloadHash},
         ${c.subtotalMinor}, ${c.shippingMinor}, ${c.taxMinor}, ${c.discountMinor}, ${c.totalMinor}, ${c.provider}, ${c.accessTokenHash}, 'open', ${c.expiresAt})`;
   }
   async getCheckout(id: string): Promise<CheckoutRow | null> {
