@@ -1,0 +1,19 @@
+/*
+ * DOOYOOSH design tokens (spec §8 — names fixed, values tuned by Frontend & Design).
+ * Values sampled from the brand logo screenshot (design/logo-screenshot.png):
+ *   background #F6F0EA→#F8F0ED, espresso #483630→#4A3931, taupe #BAA89C→#BFA99C, rose #AE8A84→#B08A85.
+ * Contrast on --color-bg (WCAG 2.2): text 9.7:1, text-muted 5.8:1, accent-strong 4.7:1.
+ * --color-accent (2.7:1) is decorative only — never use it for body text.
+ */
+:root {
+  --color-bg: #f8f0ed;
+  --color-surface: #fffcfa;
+  --color-text: #4a3931;
+  --color-text-muted: #6b5b52;
+  --color-accent: #b08a85;
+  --color-accent-strong: #8a615c;
+  --color-taupe: #bfa99c;
+  --color-border: #e6dad3;
+  --color-danger: #9b2c2c;
+  --color-success: #3f6b4a;
+}
