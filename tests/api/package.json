@@ -1,0 +1,13 @@
+{
+  "name": "dooyoosh-tests-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:live": "bash ../run-api.sh"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.7",
+    "zod": "^4.3.6"
+  }
+}

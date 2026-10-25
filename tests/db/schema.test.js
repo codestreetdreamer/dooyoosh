@@ -44,7 +44,7 @@ const ENUMS = {
   stock_reservation_status: "active converted released",
   checkout_status: "open awaiting_payment completed expired failed",
   order_status: "pending_payment paid stock_conflict fulfilling shipped delivered cancelled refunded partially_refunded",
-  payment_status: "requires_payment succeeded failed refunded partially_refunded",
+  payment_status: "requires_payment succeeded failed canceled refunded partially_refunded", // canceled = SCHEMA_DELTA B3
   shipment_status: "label_created in_transit delivered exception",
   article_status: "draft scheduled published archived",
   admin_role: "owner editor fulfilment",

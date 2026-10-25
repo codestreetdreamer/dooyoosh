@@ -1,7 +1,7 @@
 // Spec §2: "Row Level Security ON for all tables. Public reads only via server code or views."
 // Simulates Supabase: anon/authenticated have table GRANTs (Supabase default), RLS is the only gate.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { pool, seedVariant } from "./setup/db.js";
+import { pool, seedVariant, seedCheckout } from "./setup/db.js";
 
 let p;
 beforeAll(() => { p = pool(); });
@@ -24,6 +24,11 @@ describe("RLS", () => {
     expect(rows.map((r) => r.relname), "tables WITHOUT RLS").toEqual([]);
   });
   it("anon cannot read orders (PII: email, phone, addresses)", async () => {
+    // seed our own order (do not depend on file order)
+    const { checkoutId, shippingMethodId } = await seedCheckout(p);
+    await p.query(`INSERT INTO orders(reference,checkout_id,email,locale,currency,subtotal_cents,shipping_cents,total_cents,shipping_address,shipping_method_id,access_token_hash)
+      VALUES ($3, $1,'pii@b.c','uz','UZS',100,0,100,'{"line1":"secret"}',$2,repeat('ab',32))`,
+      [checkoutId, shippingMethodId, "DY-20261022-" + Array.from({ length: 5 }, () => "ABCDEFGHJKMNPQRSTVWXYZ"[Math.floor(Math.random() * 22)]).join("")]);
     const n = await as("anon", null, async (c) => {
       try { return (await c.query("SELECT count(*)::int n FROM orders")).rows[0].n; } catch { return "denied"; }
     });
@@ -40,10 +45,24 @@ describe("RLS", () => {
   });
   it("authenticated user cannot self-assign admin role (INSERT into admin_users with own uid)", async () => {
     const uid = "11111111-1111-1111-1111-111111111111";
+    await p.query("INSERT INTO auth.users(id) VALUES ($1) ON CONFLICT DO NOTHING", [uid]); // so the FK can't mask the result
     const res = await as("authenticated", uid, async (c) => {
-      try { return (await c.query("INSERT INTO admin_users(id, role) VALUES ($1,'owner')", [uid])).rowCount; } catch { return "denied"; }
+      try { return (await c.query("INSERT INTO admin_users(id, role) VALUES ($1,'owner')", [uid])).rowCount; } catch (e) { return e.code === "23503" ? "fk-masked" : "denied"; }
     });
     expect(res).toBe("denied");
+  });
+  it("authenticated user cannot UPDATE own profiles row into an admin (no role/is_admin column writable)", async () => {
+    const uid = "33333333-3333-3333-3333-333333333333";
+    await p.query("INSERT INTO auth.users(id, email) VALUES ($1,'x@y.z') ON CONFLICT DO NOTHING", [uid]);
+    const cols = (await p.query(`SELECT column_name FROM information_schema.columns WHERE table_name='profiles'`)).rows.map((r) => r.column_name);
+    expect(cols.filter((c) => /role|admin/.test(c)), "profiles must not carry authz columns").toEqual([]);
+  });
+  it("authenticated user cannot read other users' profiles", async () => {
+    await p.query("INSERT INTO auth.users(id, email) VALUES ('44444444-4444-4444-4444-444444444444','o@y.z') ON CONFLICT DO NOTHING");
+    const n = await as("authenticated", "55555555-5555-5555-5555-555555555555", async (c) => {
+      try { return (await c.query("SELECT count(*)::int n FROM profiles")).rows[0].n; } catch { return "denied"; }
+    });
+    expect(n === "denied" || n === 0).toBe(true);
   });
   it("anon cannot read draft products", async () => {
     await seedVariant(p, { onHand: 1 });

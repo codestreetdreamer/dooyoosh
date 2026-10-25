@@ -1,7 +1,7 @@
 // Spec §4.3 + v0.2 §11: dedupe via payment_events(provider, event_id); duplicate delivery must never create a 2nd order.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import pg from "pg";
-import { cfg, pool } from "./setup/db.js";
+import { cfg, pool, seedCheckout } from "./setup/db.js";
 
 let p;
 beforeAll(() => { p = pool(); });
@@ -39,12 +39,10 @@ describe("webhook / callback idempotency", () => {
   });
 
   it("second order for the same checkout is rejected by orders.checkout_id UNIQUE", async () => {
-    const m = await p.query(`INSERT INTO markets(code,currency,is_active) VALUES ('M-'||gen_random_uuid(),'UZS',true) RETURNING id`);
-    const sm = await p.query(`INSERT INTO shipping_methods(market_id,code,name,min_days,max_days) VALUES ($1,'std','Std',1,3) RETURNING id`, [m.rows[0].id]);
-    const co = await p.query(`INSERT INTO checkouts(email,locale,currency,items,shipping_address,shipping_method_id,subtotal_cents,shipping_cents,total_cents,expires_at,provider)
-      VALUES ('a@b.c','uz','UZS','[]','{}',$1,100,0,100, now()+interval '35 min','payme') RETURNING id`, [sm.rows[0].id]);
+    const { checkoutId, shippingMethodId } = await seedCheckout(p);
+    const co = { rows: [{ id: checkoutId }] }; const sm = { rows: [{ id: shippingMethodId }] };
     const ord = `INSERT INTO orders(reference,checkout_id,email,locale,currency,subtotal_cents,shipping_cents,total_cents,shipping_address,shipping_method_id,access_token_hash)
-      VALUES ($1,$2,'a@b.c','uz','UZS',100,0,100,'{}',$3,'h')`;
+      VALUES ($1,$2,'a@b.c','uz','UZS',100,0,100,'{}',$3,repeat('ab',32))`;
     await p.query(ord, ["DY-20261022-ABCDE", co.rows[0].id, sm.rows[0].id]);
     await expect(p.query(ord, ["DY-20261022-ABCDF", co.rows[0].id, sm.rows[0].id])).rejects.toMatchObject({ code: "23505" });
     await expect(p.query(ord.replace("$2", "gen_random_uuid()").replace("$3", "$2"), ["DY-20261022-ABCDE", sm.rows[0].id]))
